@@ -1,224 +1,179 @@
-# Anki Type answer Analysis AI Add-on
+# Score Answer AI for Anki
 
-## Overview
-![good evaluation](/images/good_2.png) ![good evaluation](/images/bad_answer.png) 
+AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedback, configurable prompts, and multi-provider support.
 
-This Anki add-on enhances your flashcard review experience by providing intelligent AI-powered analysis of your answers. Instead of just showing whether your answer matches the expected one, the AI evaluates the quality of your response and provides constructive feedback to help you learn more effectively.
+![good evaluation](/images/good_2.png)
+![bad evaluation](/images/bad_answer.png)
 
-⚠️ : This add-on works with Anki's type-answer question-answer.
+## What This Add-on Does
 
-## Purpose
+- Evaluates typed answers semantically (not only exact text matching)
+- Gives structured feedback:
+  - score (0-10) when available
+  - improvement tips
+  - review suggestion (`Again`, `Hard`, `Good`, `Easy`)
+- Runs analysis in background to keep review flow responsive
+- Supports multiple LLM providers from one config screen
+- Supports multilingual analysis and UI localization
 
-### What it does:
-- **Intelligent Answer Evaluation**: AI analyzes your answers semantically, not just text matching
-- **Constructive Feedback**: Provides specific tips to improve your understanding
-- **Smart Review Suggestions**: Recommends appropriate review intervals based on answer quality
-- **Multi-Language Support**: Works in English, French, Spanish, and German
-- **Multiple AI Providers**: Choose from OpenAI, Google Gemini, Anthropic Claude, DeepSeek, openrouter or Groq
-⚠️ : I tested Google Gemini and OpenRouter using their free evaluation keys.
+> This add-on is designed for Anki cards using typed answers (`{{type:...}}`).
 
-### Why use it:
-- **Better Learning**: Get personalized feedback on why your answer was right or wrong
-- **Semantic Understanding**: AI recognizes when your answer is conceptually correct even if worded differently
-- **Efficiency**: Focus more time on concepts you struggle with
-- **Motivation**: Positive reinforcement when you're improving
+## Key Features
 
-## Configuration Options
+- **Multi-provider support**: OpenAI, Gemini, Claude, DeepSeek, Groq, OpenRouter
+- **Analysis language control**: choose output language independently of your answer language
+- **Interface language auto mode**: config UI can follow Anki UI language
+- **Custom prompt system**:
+  - optional custom system prompt
+  - optional custom analysis prompt template with variables
+  - reset to language defaults
+  - copy defaults to clipboard
+- **Custom model IDs**:
+  - add your own model IDs in provider tabs
+  - persist custom IDs in config
+- **OpenRouter resiliency**:
+  - recommended `openrouter/free`
+  - fallback-aware connection test behavior
+- **Error-safe scoring**:
+  - provider errors no longer show fake `5/10`
+  - displays `N/A` when analysis is unavailable
 
-⚠️ :  <b>After setup config it's mandatory to restart anki<b>
+## Supported Languages
+
+Analysis feedback and UI labels currently support:
+
+- English
+- French
+- Spanish
+- German
+- Russian
+- Japanese
+- Chinese
+- Korean
+
+## Installation
+
+1. Open Anki.
+2. Go to `Tools -> Add-ons -> Install from file...` (or install by AnkiWeb code if published).
+3. Restart Anki.
+
+## Quick Start
+
+![Config access from Tools](/images/config_botton_from_tools.png)
+
+1. Open `Tools -> AI Multi-Provider Configuration`.
+2. Select provider and model.
+3. Add your API key.
+4. Click `Test API Connection`.
+5. Select `Analysis language`.
+6. Save and review your `type:` cards as usual.
+
+## Configuration Guide
 
 ### General Settings
 
-#### AI Provider
-![config0](/images/config_0.png)
-![config0](/images/config.png)
-- **Purpose**: Choose which AI service to use for analysis
-- **Options**: OpenAI, Google Gemini, Anthropic Claude, DeepSeek, Groq
-- **Default**: OpenAI
-- **Note**: Only the selected provider's tab will be enabled in the configuration
-⚠️ : For basic use, I recommend using a Gemini key, since the free key allows you to run 2 or 3 complete review sessions
+- **AI Provider**: active provider used for analysis
+- **Analysis language**: language for AI feedback (`tips`) and prompt intent
+- **Enable AI analysis**: global on/off
+- **Max tokens**: max output size
+- **Temperature**: response creativity/variance
+- **Show Anki compare**: toggle native Anki comparison block
+- **Show code compare**: toggle side-by-side extracted text comparison
 
-#### Language
-- **Purpose**: Set the language for AI feedback and interface
-- **Options**: 
-  - English (default)
-  - Français (French)
-  - Español (Spanish) 
-  - Deutsch (German)
-- **Impact**: Changes AI prompt language and interface text
+### Prompt Customization
 
-#### Enable AI Analysis
-- **Purpose**: Toggle the entire AI analysis feature on/off
-- **Default**: Enabled
-- **When disabled**: Shows standard Anki comparison only
+- **Use custom prompt template**:
+  - disabled: fields are read-only and show default placeholders
+  - enabled: fields become editable
+- **Custom system prompt**: optional replacement for default system message
+- **Custom analysis prompt template**: supports:
+  - `{question}`
+  - `{expected_answer}`
+  - `{user_answer}`
+  - `{language}`
+- **Reset prompts to defaults**: injects default prompts for selected analysis language
+- **Copy default prompts**: copies language-specific defaults to clipboard
 
-#### Max Tokens
-- **Purpose**: Limit the length of AI responses
-- **Range**: 50-4000 tokens
-- **Default**: 200
-- **Impact**: Longer = more detailed feedback, but costs more
+### Provider Tabs
 
-#### Temperature (0-1)
-- **Purpose**: Control AI creativity/randomness
-- **Range**: 0.0 (deterministic) to 1.0 (creative)
-- **Default**: 0.7
-- **Recommendation**: 0.3-0.7 for educational feedback
+Each provider tab includes:
 
-### Provider-Specific Settings
+- API key field
+- model selector
+- editable model field
+- `Add model ID` input/button to append custom model IDs
 
-Each AI provider has its own tab with specific configuration:\n
+Custom model IDs are saved per provider in config and restored on restart.
 
-⚠️ :  <b>After config restart anki<b>
+> Always test a model ID before using it in real reviews.  
+> Some models may intermittently fail or be temporarily unavailable for unknown provider-side reasons.
 
-#### OpenAI
-- **Models Available**: gpt-3.5-turbo, gpt-4, gpt-4-turbo, gpt-4o, gpt-4o-mini
-- **API Key**: Get from https://platform.openai.com/api-keys
-- **Cost**: Pay-per-use, varies by model
-- **Recommended Model**: gpt-3.5-turbo (cost-effective) or gpt-4o-mini (better quality)
+## OpenRouter Notes
 
-#### Google Gemini
-- **Models Available**: gemini-1.5-flash, gemini-1.5-pro, gemini-1.0-pro
-- **API Key**: Get from https://aistudio.google.com/app/apikey
-- **Cost**: Free tier available, then pay-per-use
-- **Recommended Model**: gemini-1.5-flash (fast and efficient)
+OpenRouter availability can vary by model/provider at runtime.
 
-#### Anthropic Claude
-- **Models Available**: claude-3-haiku-20240307, claude-3-sonnet-20240229, claude-3-opus-20240229
-- **API Key**: Get from https://console.anthropic.com/
-- **Cost**: Pay-per-use
-- **Recommended Model**: claude-3-haiku-20240307 (fastest and cheapest)
+Recommended defaults:
 
-#### DeepSeek
-- **Models Available**: deepseek-chat, deepseek-coder
-- **API Key**: Get from https://platform.deepseek.com/api_keys
-- **Cost**: Very competitive pricing
-- **Recommended Model**: deepseek-chat (general purpose)
+- `openrouter/free` for highest compatibility
+- use specific `:free` variants only when needed
+- always run `Test API Connection` after changing model ID
 
-#### Groq
-- **Models Available**: llama3-8b-8192, llama3-70b-8192, mixtral-8x7b-32768, gemma-7b-it
-- **API Key**: Get from https://console.groq.com/keys
-- **Cost**: Free tier available with rate limits
-- **Recommended Model**: llama3-8b-8192 (fast inference)
+If selected model test fails, the add-on may successfully validate via `openrouter/free` fallback.
 
-#### OpenRouter
-- **Models Available**: "deepseek/deepseek-r1:free", "openai/gpt-oss-20b:free", "qwen/qwen3-coder:free" ,"google/gemma-3n-e2b-it:free" ,"tencent/hunyuan-a13b-instruct:free"
-- **API Key**: Get from https://console.groq.com/keys
-- **Cost**: Free tier available with rate limits
-- ⚠️ : **Recommended Model**: tencent/hunyuan-a13b-instruct:free
+## Scoring Behavior
 
-
-## Setup Instructions
-
-### 1. Choose Your AI Provider
-1. Open Anki
-2. Go to **Tools → AI Multi-Provider Configuration**
-3. Select your preferred AI provider from the dropdown
-4. Notice that only the selected provider's tab is enabled
-
-### 2. Configure API Access
-1. Click on the tab for your selected provider
-2. Get an API key from the provider's website (links provided in each tab)
-3. Enter your API key in the field
-4. Select your preferred model
-5. Click "Test API Connection" to verify everything works
-
-### 3. Adjust Settings
-1. Choose your preferred language for feedback
-2. Adjust max tokens if needed (200 is usually sufficient)
-3. Set temperature (0.7 is a good balance)
-4. Click "Save"
-
-### 4. Start Using
-![loadspinner](/images/analysis_by_AI.png)
-![review](/images/very_good.png)
-- Review your flashcards as normal
-- After answering, you'll see both Anki's standard comparison and the AI analysis
-- The AI provides:
-  - A score from 0-10
-  - Specific improvement tips
-  - A review suggestion (Again/Hard/Good/Easy)
-
-## AI Scoring System
-
-The AI evaluates your answers on a 0-10 scale:
-
-- **0-3 (Again)**: Incorrect or very incomplete answer
-  - *Action*: Review the material again immediately
-  - *Color*: Red ❌
-
-- **4-5 (Hard)**: Partially correct but with significant errors
-  - *Action*: Review soon with shorter intervals
-  - *Color*: Orange ⚠️
-
-- **6-8 (Good)**: Correct answer with minor imperfections
-  - *Action*: Standard review interval
-  - *Color*: Green ✅
-
-- **9-10 (Easy)**: Excellent and complete answer
-  - *Action*: Longer review intervals
-  - *Color*: Blue 🌟
-
-## Cost Considerations
-
-### Free Options:
-- **Google Gemini**: Generous free tier
-- **Groq**: Free tier with rate limits
-- **OpenRouter**: Free tier with rate limits
-
-### Paid Options:
-- **OpenAI**: Moderate pricing, excellent quality
-- **Anthropic Claude**: Premium pricing, high quality
-
-### Cost Optimization Tips:
-1. Start with free tiers (Gemini or Groq)
-2. Use shorter max_tokens (100-200) for basic feedback
-3. Choose efficient models (gpt-3.5-turbo, gemini-1.5-flash, claude-3-haiku)
-4. Monitor your usage through provider dashboards
+- Normal case: shows score and review suggestion
+- Provider/API/parsing failure: shows `N/A` (not a fake numeric score)
+- Keeps failure details in feedback text for easier troubleshooting
 
 ## Troubleshooting
 
-### Common Issues:
+### "Connection error" or "Provider returned error"
 
-#### "API key not configured"
-- Ensure you've entered the API key for your selected provider
-- Test the connection using the test button
+- Verify API key and provider account status
+- Try another model ID
+- For OpenRouter, start with `openrouter/free`
+- Reduce traffic / retry later (temporary provider saturation can happen)
 
-#### "Connection error"
-- Check your internet connection
-- Verify your API key is correct and has sufficient credits
-- Try switching to a different provider
+### Always getting English feedback
 
-#### "AI analysis not available"
-- Check if AI analysis is enabled in settings
-- Verify your selected provider's API key is working
-- Try reducing max_tokens if you're hitting limits
+- Check `Analysis language` in config
+- Ensure custom prompts do not force English
+- Use reset prompt defaults for the selected analysis language
 
-#### Interface appears in wrong language
-- Change the language setting in the configuration
-- Restart Anki after changing language settings
+### Model works in one provider but not another
 
-### Performance Tips:
-- The add-on caches recent analyses to avoid duplicate API calls
-- Analysis happens asynchronously to avoid blocking your reviews
-- Cache automatically clears after 10 entries to manage memory
+- Model IDs are provider-specific
+- Use `Add model ID` and test each ID explicitly
 
-## Privacy and Data
+## Privacy
 
-- Your answers are sent to the selected AI provider for analysis
-- No data is stored permanently by the add-on (only temporary cache)
-- Each provider has their own data retention policies
-- Consider using local or privacy-focused providers if data privacy is a concern
-
-## Support
-
-For issues specific to this add-on, check:
-1. Your API key configuration
-2. Internet connectivity
-3. Provider service status
-4. Anki add-on compatibility
-5. let me know !
-
+- Card question/answer content is sent to selected AI provider for analysis
+- The add-on stores temporary in-memory cache for active session flow
+- No long-term local analytics storage is implemented by default
+- Provider-side retention policies depend on the provider you choose
 
 ## Compatibility
 
-⚠️ This add-on was tested with Anki 2.1.x (release 25.07.5).
+- Tested on modern Anki 25.x builds
+- Uses Anki reviewer hooks for typed-answer comparison and rendering
+
+## Screenshots
+
+- Main feedback: `/images/very_good.png`
+- Loading state: `/images/analysis_by_AI.png`
+- Config UI: `/images/config.png`, `/images/config_0.png`
+- Latest changes (languages/prompt/model IDs): `/images/changes_made_languages_customprompt_modeid.png`
+- Config entry point in Tools: `/images/config_botton_from_tools.png`
+
+## Contributing
+
+Issues and improvements are welcome.  
+When reporting bugs, include:
+
+- Anki version
+- add-on version/commit
+- provider + model ID
+- exact error text
+- steps to reproduce
+

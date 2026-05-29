@@ -16,6 +16,10 @@ LANG_TO_LABELS = {
     "german":    {"expected": "Erwartet",  "provided": "Eingegeben"},
     "portuguese":{"expected": "Esperado",  "provided": "Digitado"},
     "italian":   {"expected": "Atteso",    "provided": "Inserito"},
+    "russian":   {"expected": "Ожидаемый ответ", "provided": "Ваш ответ"},
+    "japanese":  {"expected": "期待される回答", "provided": "あなたの回答"},
+    "chinese":   {"expected": "期望答案", "provided": "你的回答"},
+    "korean":    {"expected": "정답", "provided": "내 답변"},
 }
 
 def get_compare_labels(config: dict) -> dict:
@@ -69,7 +73,19 @@ def _labels_from_config(config: dict) -> dict:
         lang = _detect_ui_lang_code()
     else:
         lang = str(sel).lower()[:2]
-    base = LANG_LABELS.get(lang, LANG_LABELS["en"])
+    code_to_key = {
+        "en": "english",
+        "fr": "french",
+        "es": "spanish",
+        "de": "german",
+        "pt": "portuguese",
+        "it": "italian",
+        "ru": "russian",
+        "ja": "japanese",
+        "zh": "chinese",
+        "ko": "korean",
+    }
+    base = LANG_TO_LABELS.get(code_to_key.get(lang, "english"), LANG_TO_LABELS["english"])
     # allow future per-user overrides (optional keys)
     overrides = (config or {}).get("labels", {})
     lbl_expected = overrides.get("expected", base["expected"])
@@ -328,6 +344,18 @@ def _code_compare_block(expected: str, provided: str, lang_hint: str, labels: di
     </div>
     """
 
+def make_analysis_unavailable(reason: str, language: str = "english") -> dict:
+    texts = get_ui_texts(language)
+    base = texts.get("ai_not_available", "AI analysis not available")
+    reason = (reason or "").strip()
+    tips = f"{base}: {reason}" if reason else base
+    return {
+        "scored": False,
+        "score": None,
+        "tips": tips,
+        "review_suggestion": None,
+    }
+
 def store_ai_analysis(expected_provided_tuple, type_pattern):
     """
     Lance l'analyse IA en arrière-plan pour ne pas bloquer l'UI,
@@ -361,7 +389,8 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
             return analyze_answer_with_ai(question_text, true_answer, user_answer)
         except Exception as e:
             print(f"AI Analysis Error (bg): {e}")
-            return {"score": 5, "tips": f"Analysis error: {str(e)}", "review_suggestion": "Good"}
+            cfg = get_config()
+            return make_analysis_unavailable(str(e), cfg.get("language", "english"))
 
     # Callback: reçoit un Future
     def on_done(fut):
@@ -369,7 +398,8 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
             result = fut.result()
         except Exception as e:
             print(f"Background task failed: {e}")
-            result = {"score": 5, "tips": f"Analysis error: {str(e)}", "review_suggestion": "Good"}
+            cfg = get_config()
+            result = make_analysis_unavailable(str(e), cfg.get("language", "english"))
         finally:
             # Toujours dé-marquer l'état d'analyse
             is_analyzing[cache_key] = False
@@ -515,37 +545,35 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     # Si l'analyse n'est pas disponible, utiliser des valeurs par défaut
     if not ai_analysis:
         print(f"No analysis available for {cache_key}, using defaults")
-        ai_analysis = {
-            "score": 5, 
-            "tips": texts.get('ai_not_available', 'AI analysis not available'), 
-            "review_suggestion": "Good"
-        }
+        ai_analysis = make_analysis_unavailable("", language)
     
+    is_scored = bool(ai_analysis.get("scored", True)) and isinstance(ai_analysis.get("score"), int)
+
     # Déterminer les couleurs selon le score
-    score = ai_analysis.get('score', 5)
-    if score <= 3:
+    score = ai_analysis.get('score', 5) if is_scored else None
+    if not is_scored:
+        score_color = "#6c757d"
+        score_bg = "#f3f4f6"
+        score_icon = "ℹ️"
+    elif score <= 3:
         score_color = "#f44336"  # Rouge
         score_bg = "#ffebee"
         score_icon = "❌"
-        pulse_color = "#f44336"
     elif score <= 5:
         score_color = "#ff9800"  # Orange
         score_bg = "#fff3e0"
         score_icon = "⚠️"
-        pulse_color = "#ff9800"
     elif score <= 8:
         score_color = "#4caf50"  # Vert
         score_bg = "#e8f5e8"
         score_icon = "✅"
-        pulse_color = "#4caf50"
     else:
         score_color = "#2196f3"  # Bleu
         score_bg = "#e3f2fd"
         score_icon = "🌟"
-        pulse_color = "#2196f3"
     
     # Déterminer la couleur de la suggestion
-    suggestion = ai_analysis.get('review_suggestion', 'Good')
+    suggestion = ai_analysis.get('review_suggestion', 'Good') if is_scored else None
     suggestion_colors = {
         "Again": ("#f44336", "#ffebee", "🔄"),
         "Hard": ("#ff9800", "#fff3e0", "🔥"), 
@@ -553,6 +581,19 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
         "Easy": ("#2196f3", "#e3f2fd", "😎")
     }
     suggestion_color, suggestion_bg, suggestion_icon = suggestion_colors.get(suggestion, ("#4caf50", "#e8f5e8", "👍"))
+    score_badge = f"{score_icon} {score}/10" if is_scored else f"{score_icon} N/A"
+    suggestion_section = f"""
+            <div style="background: linear-gradient(135deg, {suggestion_bg}, {suggestion_bg}dd); border: 2px solid {suggestion_color}; border-radius: 12px; padding: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <span style="color: #2c3e50; font-weight: 700; font-size: 16px; display: flex; align-items: center;">
+                        🎯 {texts.get('review_suggestion', 'Review Suggestion')}:
+                    </span>
+                    <span style="background: linear-gradient(135deg, {suggestion_color}, {suggestion_color}dd); color: white; padding: 10px 18px; border-radius: 20px; font-weight: bold; font-size: 15px; box-shadow: 0 3px 10px rgba(0,0,0,0.2);">
+                        {suggestion_icon} {texts.get('suggestions', {}).get(suggestion, suggestion)}
+                    </span>
+                </div>
+            </div>
+    """ if is_scored else ""
     
     # **NOUVEAU: Afficher la question pour plus de contexte si elle existe**
     question_display = ""
@@ -598,7 +639,7 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
                     </h3>
                 </div>
                 <div style="background: linear-gradient(135deg, {score_color}, {score_color}dd); color: white; padding: 12px 20px; border-radius: 25px; font-weight: bold; font-size: 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-                    {score_icon} {score}/10
+                    {score_badge}
                 </div>
             </div>
             
@@ -613,16 +654,7 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
                 </p>
             </div>
             
-            <div style="background: linear-gradient(135deg, {suggestion_bg}, {suggestion_bg}dd); border: 2px solid {suggestion_color}; border-radius: 12px; padding: 16px;">
-                <div style="display: flex; align-items: center; justify-content: space-between;">
-                    <span style="color: #2c3e50; font-weight: 700; font-size: 16px; display: flex; align-items: center;">
-                        🎯 {texts.get('review_suggestion', 'Review Suggestion')}:
-                    </span>
-                    <span style="background: linear-gradient(135deg, {suggestion_color}, {suggestion_color}dd); color: white; padding: 10px 18px; border-radius: 20px; font-weight: bold; font-size: 15px; box-shadow: 0 3px 10px rgba(0,0,0,0.2);">
-                        {suggestion_icon} {texts.get('suggestions', {}).get(suggestion, suggestion)}
-                    </span>
-                </div>
-            </div>
+            {suggestion_section}
         </div>
     </div>
     """
@@ -675,23 +707,26 @@ DEFAULT_CONFIG = {
     "provider": "openai",
     "language": "english",
     "openai_api_key": "",
-    "openai_model": "gpt-3.5-turbo",
+    "openai_model": "gpt-4.1-mini",
     "gemini_api_key": "",
-    "gemini_model": "gemini-1.5-flash",
+    "gemini_model": "gemini-2.5-flash",
     "claude_api_key": "",
-    "claude_model": "claude-3-haiku-20240307",
+    "claude_model": "claude-3-5-haiku-latest",
     "deepseek_api_key": "",
     "deepseek_model": "deepseek-chat",
     "groq_api_key": "",
-    "groq_model": "llama3-8b-8192",
+    "groq_model": "llama-3.3-70b-versatile",
     "openrouter_api_key": "",
-    "openrouter_model": "deepseek/deepseek-r1:free",
+    "openrouter_model": "openrouter/free",
     "enabled": True,
     "max_tokens": 200,
     "temperature": 0.7,
     "show_anki_compare": True,
     "show_code_compare": True,
-    "ui_language": "auto",  # 'auto' | 'en' | 'fr' | 'es' | 'de' | 'pt' | 'it'
+    "ui_language": "auto",  # 'auto' | 'en' | 'fr' | 'es' | 'de' | 'pt' | 'it' | 'ru' | 'ja' | 'zh' | 'ko'
+    "use_custom_prompt": False,
+    "custom_system_prompt": "",
+    "custom_analysis_prompt_template": ""
 }
 
 # **MODIFIÉ: Langues supportées avec nouveau texte pour le contexte de question**
@@ -767,19 +802,318 @@ LANGUAGES = {
             "Good": "Gut",
             "Easy": "Einfach"
         }
+    },
+    "russian": {
+        "name": "Русский",
+        "ai_analysis": "Анализ ИИ",
+        "improvement_tips": "Советы по улучшению",
+        "review_suggestion": "Рекомендация по повторению",
+        "question_context": "Контекст вопроса",
+        "analyzing": "Идет анализ ИИ...",
+        "please_wait": "Подождите, пока ИИ оценивает ваш ответ",
+        "processing_response": "Обрабатывается ваш ответ...",
+        "ai_not_available": "Анализ ИИ недоступен",
+        "no_tips_available": "Советы недоступны",
+        "suggestions": {
+            "Again": "Снова",
+            "Hard": "Трудно",
+            "Good": "Хорошо",
+            "Easy": "Легко"
+        }
+    },
+    "japanese": {
+        "name": "日本語",
+        "ai_analysis": "AI分析",
+        "improvement_tips": "改善のヒント",
+        "review_suggestion": "復習の提案",
+        "question_context": "問題の文脈",
+        "analyzing": "AI分析中...",
+        "please_wait": "AIが回答を評価するまでお待ちください",
+        "processing_response": "回答を処理中...",
+        "ai_not_available": "AI分析は利用できません",
+        "no_tips_available": "利用できるヒントがありません",
+        "suggestions": {
+            "Again": "もう一度",
+            "Hard": "難しい",
+            "Good": "良い",
+            "Easy": "簡単"
+        }
+    },
+    "chinese": {
+        "name": "中文",
+        "ai_analysis": "AI 分析",
+        "improvement_tips": "改进建议",
+        "review_suggestion": "复习建议",
+        "question_context": "问题上下文",
+        "analyzing": "AI 正在分析...",
+        "please_wait": "请稍候，AI 正在评估你的答案",
+        "processing_response": "正在处理你的回答...",
+        "ai_not_available": "AI 分析不可用",
+        "no_tips_available": "暂无可用建议",
+        "suggestions": {
+            "Again": "重来",
+            "Hard": "困难",
+            "Good": "良好",
+            "Easy": "简单"
+        }
+    },
+    "korean": {
+        "name": "한국어",
+        "ai_analysis": "AI 분석",
+        "improvement_tips": "개선 팁",
+        "review_suggestion": "복습 제안",
+        "question_context": "질문 맥락",
+        "analyzing": "AI 분석 진행 중...",
+        "please_wait": "AI가 답변을 평가하는 동안 잠시만 기다려 주세요",
+        "processing_response": "답변 처리 중...",
+        "ai_not_available": "AI 분석을 사용할 수 없습니다",
+        "no_tips_available": "사용 가능한 팁이 없습니다",
+        "suggestions": {
+            "Again": "다시",
+            "Hard": "어려움",
+            "Good": "좋음",
+            "Easy": "쉬움"
+        }
     }
+}
+
+DEFAULT_CUSTOM_SYSTEM_PROMPT = (
+    "You are an educational assistant. Evaluate the student's answer kindly and constructively."
+)
+
+DEFAULT_CUSTOM_ANALYSIS_PROMPT_TEMPLATE = """Analyze the student's answer and return strict JSON.
+
+Question: "{question}"
+Expected answer: "{expected_answer}"
+Student answer: "{user_answer}"
+Language: "{language}"
+
+Return ONLY valid JSON with this schema:
+{
+  "score": 0,
+  "tips": "short constructive feedback",
+  "review_suggestion": "Again"
+}
+
+Rules:
+- score is an integer from 0 to 10
+- review_suggestion must be one of: Again, Hard, Good, Easy
+- tips should be concise and actionable
+"""
+
+CONFIG_UI_TEXTS = {
+    "en": {
+        "menu_title": "AI Multi-Provider Configuration",
+        "window_title": "AI Multi-Provider Configuration",
+        "show_anki_compare": "Show Anki default comparison",
+        "show_code_compare": "Show code comparison block",
+        "ai_provider": "AI Provider:",
+        "analysis_language": "Analysis language:",
+        "enable_ai": "Enable AI analysis",
+        "max_tokens": "Max tokens:",
+        "temperature": "Temperature (0-1):",
+        "use_custom_prompt": "Use custom prompt template",
+        "custom_system_prompt": "Custom system prompt (optional):",
+        "custom_analysis_prompt": "Custom analysis prompt template (supports {question}, {expected_answer}, {user_answer}, {language}):",
+        "custom_system_placeholder": "If empty, language default system prompt is used.",
+        "reset_custom_prompt": "Reset prompts to defaults",
+        "copy_default_prompts": "Copy default prompts",
+        "copied_default_prompts": "Default prompts copied to clipboard.",
+        "add_model_id": "Add model ID",
+        "model_id_placeholder": "provider/model-id",
+        "test_api": "Test API Connection",
+        "testing": "Testing...",
+        "save": "Save",
+        "cancel": "Cancel",
+        "saved": "Configuration saved!",
+        "enter_api_key": "Please enter an API key to test the connection.",
+        "connection_success": "Connection successful with {provider}!\n\nResponse: {response}",
+        "connection_error": "Connection error with {provider}:\n\n{error}",
+    },
+    "fr": {
+        "menu_title": "Configuration IA multi-fournisseurs",
+        "window_title": "Configuration IA multi-fournisseurs",
+        "show_anki_compare": "Afficher la comparaison par defaut d'Anki",
+        "show_code_compare": "Afficher le bloc de comparaison de code",
+        "ai_provider": "Fournisseur IA :",
+        "analysis_language": "Langue d'analyse :",
+        "enable_ai": "Activer l'analyse IA",
+        "max_tokens": "Max tokens :",
+        "temperature": "Temperature (0-1) :",
+        "use_custom_prompt": "Utiliser un prompt personnalise",
+        "custom_system_prompt": "Prompt systeme personnalise (optionnel) :",
+        "custom_analysis_prompt": "Template du prompt d'analyse (variables {question}, {expected_answer}, {user_answer}, {language}) :",
+        "custom_system_placeholder": "Si vide, le prompt systeme par defaut de la langue est utilise.",
+        "reset_custom_prompt": "Reinitialiser les prompts par defaut",
+        "copy_default_prompts": "Copier les prompts par defaut",
+        "copied_default_prompts": "Prompts par defaut copies dans le presse-papiers.",
+        "add_model_id": "Ajouter un ID de modele",
+        "model_id_placeholder": "provider/model-id",
+        "test_api": "Tester la connexion API",
+        "testing": "Test en cours...",
+        "save": "Enregistrer",
+        "cancel": "Annuler",
+        "saved": "Configuration enregistree !",
+        "enter_api_key": "Veuillez saisir une cle API pour tester la connexion.",
+        "connection_success": "Connexion reussie avec {provider} !\n\nReponse : {response}",
+        "connection_error": "Erreur de connexion avec {provider} :\n\n{error}",
+    },
+    "es": {
+        "menu_title": "Configuracion IA multi-proveedor",
+        "window_title": "Configuracion IA multi-proveedor",
+        "show_anki_compare": "Mostrar comparacion por defecto de Anki",
+        "show_code_compare": "Mostrar bloque de comparacion de codigo",
+        "ai_provider": "Proveedor de IA:",
+        "analysis_language": "Idioma de analisis:",
+        "enable_ai": "Activar analisis IA",
+        "max_tokens": "Max tokens:",
+        "temperature": "Temperatura (0-1):",
+        "use_custom_prompt": "Usar plantilla de prompt personalizada",
+        "custom_system_prompt": "Prompt de sistema personalizado (opcional):",
+        "custom_analysis_prompt": "Plantilla del prompt de analisis (variables {question}, {expected_answer}, {user_answer}, {language}):",
+        "custom_system_placeholder": "Si esta vacio, se usa el prompt de sistema por defecto del idioma.",
+        "test_api": "Probar conexion API",
+        "testing": "Probando...",
+        "save": "Guardar",
+        "cancel": "Cancelar",
+        "saved": "Configuracion guardada!",
+        "enter_api_key": "Introduce una clave API para probar la conexion.",
+        "connection_success": "Conexion correcta con {provider}!\n\nRespuesta: {response}",
+        "connection_error": "Error de conexion con {provider}:\n\n{error}",
+    },
+    "de": {
+        "menu_title": "Mehranbieter-KI-Konfiguration",
+        "window_title": "Mehranbieter-KI-Konfiguration",
+        "show_anki_compare": "Anki-Standardvergleich anzeigen",
+        "show_code_compare": "Codevergleichsblock anzeigen",
+        "ai_provider": "KI-Anbieter:",
+        "analysis_language": "Analysesprache:",
+        "enable_ai": "KI-Analyse aktivieren",
+        "max_tokens": "Max Tokens:",
+        "temperature": "Temperatur (0-1):",
+        "use_custom_prompt": "Benutzerdefinierte Prompt-Vorlage verwenden",
+        "custom_system_prompt": "Benutzerdefinierter System-Prompt (optional):",
+        "custom_analysis_prompt": "Analyse-Prompt-Vorlage (Variablen {question}, {expected_answer}, {user_answer}, {language}):",
+        "custom_system_placeholder": "Wenn leer, wird der sprachspezifische Standard-Systemprompt verwendet.",
+        "test_api": "API-Verbindung testen",
+        "testing": "Teste...",
+        "save": "Speichern",
+        "cancel": "Abbrechen",
+        "saved": "Konfiguration gespeichert!",
+        "enter_api_key": "Bitte API-Schlussel eingeben, um die Verbindung zu testen.",
+        "connection_success": "Verbindung mit {provider} erfolgreich!\n\nAntwort: {response}",
+        "connection_error": "Verbindungsfehler mit {provider}:\n\n{error}",
+    },
+    "ru": {
+        "menu_title": "Настройка ИИ (мульти-провайдер)",
+        "window_title": "Настройка ИИ (мульти-провайдер)",
+        "show_anki_compare": "Показывать стандартное сравнение Anki",
+        "show_code_compare": "Показывать блок сравнения кода",
+        "ai_provider": "Провайдер ИИ:",
+        "analysis_language": "Язык анализа:",
+        "enable_ai": "Включить анализ ИИ",
+        "max_tokens": "Макс. токенов:",
+        "temperature": "Температура (0-1):",
+        "use_custom_prompt": "Использовать пользовательский шаблон промпта",
+        "custom_system_prompt": "Пользовательский системный промпт (опционально):",
+        "custom_analysis_prompt": "Шаблон промпта анализа (переменные {question}, {expected_answer}, {user_answer}, {language}):",
+        "custom_system_placeholder": "Если пусто, используется системный промпт языка по умолчанию.",
+        "test_api": "Проверить API",
+        "testing": "Проверка...",
+        "save": "Сохранить",
+        "cancel": "Отмена",
+        "saved": "Конфигурация сохранена!",
+        "enter_api_key": "Введите API-ключ для проверки соединения.",
+        "connection_success": "Успешное подключение к {provider}!\n\nОтвет: {response}",
+        "connection_error": "Ошибка подключения к {provider}:\n\n{error}",
+    },
+    "ja": {
+        "menu_title": "AI マルチプロバイダー設定",
+        "window_title": "AI マルチプロバイダー設定",
+        "show_anki_compare": "Anki の標準比較を表示",
+        "show_code_compare": "コード比較ブロックを表示",
+        "ai_provider": "AI プロバイダー:",
+        "analysis_language": "分析言語:",
+        "enable_ai": "AI 分析を有効化",
+        "max_tokens": "最大トークン:",
+        "temperature": "温度 (0-1):",
+        "use_custom_prompt": "カスタムプロンプトテンプレートを使用",
+        "custom_system_prompt": "カスタムシステムプロンプト (任意):",
+        "custom_analysis_prompt": "分析プロンプトテンプレート ({question}, {expected_answer}, {user_answer}, {language} を使用可能):",
+        "custom_system_placeholder": "空の場合は言語デフォルトのシステムプロンプトを使用します。",
+        "test_api": "API 接続テスト",
+        "testing": "テスト中...",
+        "save": "保存",
+        "cancel": "キャンセル",
+        "saved": "設定を保存しました！",
+        "enter_api_key": "接続テストのため API キーを入力してください。",
+        "connection_success": "{provider} への接続に成功しました！\n\n応答: {response}",
+        "connection_error": "{provider} への接続エラー:\n\n{error}",
+    },
+    "zh": {
+        "menu_title": "AI 多供应商配置",
+        "window_title": "AI 多供应商配置",
+        "show_anki_compare": "显示 Anki 默认对比",
+        "show_code_compare": "显示代码对比块",
+        "ai_provider": "AI 提供商：",
+        "analysis_language": "分析语言：",
+        "enable_ai": "启用 AI 分析",
+        "max_tokens": "最大 tokens：",
+        "temperature": "温度 (0-1)：",
+        "use_custom_prompt": "使用自定义提示词模板",
+        "custom_system_prompt": "自定义系统提示词（可选）：",
+        "custom_analysis_prompt": "自定义分析提示词模板（支持 {question}, {expected_answer}, {user_answer}, {language}）：",
+        "custom_system_placeholder": "为空时将使用当前语言的默认系统提示词。",
+        "test_api": "测试 API 连接",
+        "testing": "测试中...",
+        "save": "保存",
+        "cancel": "取消",
+        "saved": "配置已保存！",
+        "enter_api_key": "请先输入 API Key 再测试连接。",
+        "connection_success": "已成功连接 {provider}！\n\n响应：{response}",
+        "connection_error": "连接 {provider} 失败：\n\n{error}",
+    },
+    "ko": {
+        "menu_title": "AI 멀티 제공자 설정",
+        "window_title": "AI 멀티 제공자 설정",
+        "show_anki_compare": "Anki 기본 비교 표시",
+        "show_code_compare": "코드 비교 블록 표시",
+        "ai_provider": "AI 제공자:",
+        "analysis_language": "분석 언어:",
+        "enable_ai": "AI 분석 사용",
+        "max_tokens": "최대 토큰:",
+        "temperature": "온도 (0-1):",
+        "use_custom_prompt": "사용자 정의 프롬프트 템플릿 사용",
+        "custom_system_prompt": "사용자 정의 시스템 프롬프트 (선택):",
+        "custom_analysis_prompt": "분석 프롬프트 템플릿 ({question}, {expected_answer}, {user_answer}, {language} 지원):",
+        "custom_system_placeholder": "비어 있으면 언어 기본 시스템 프롬프트를 사용합니다.",
+        "test_api": "API 연결 테스트",
+        "testing": "테스트 중...",
+        "save": "저장",
+        "cancel": "취소",
+        "saved": "설정이 저장되었습니다!",
+        "enter_api_key": "연결 테스트를 위해 API 키를 입력하세요.",
+        "connection_success": "{provider} 연결 성공!\n\n응답: {response}",
+        "connection_error": "{provider} 연결 오류:\n\n{error}",
+    },
 }
 
 def get_ui_texts(language="english"):
     """Récupère les textes de l'interface selon la langue"""
     return LANGUAGES.get(language, LANGUAGES["english"])
 
+def get_config_ui_texts(config=None):
+    cfg = config or {}
+    sel = str(cfg.get("ui_language", "auto")).lower()
+    code = _detect_ui_lang_code() if sel == "auto" else sel[:2]
+    return CONFIG_UI_TEXTS.get(code, CONFIG_UI_TEXTS["en"])
+
 # Configuration des fournisseurs
 PROVIDERS = {
     "openai": {
         "name": "OpenAI",
         "url": "https://api.openai.com/v1/chat/completions",
-        "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo", "gpt-4o", "gpt-4o-mini"],
+        "models": ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "o4-mini"],
         "headers_func": lambda api_key: {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -788,7 +1122,7 @@ PROVIDERS = {
     "gemini": {
         "name": "Google Gemini",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        "models": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"],
+        "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-preview-09-2025"],
         "headers_func": lambda api_key: {
             "Content-Type": "application/json",
             "x-goog-api-key": api_key
@@ -797,7 +1131,7 @@ PROVIDERS = {
     "claude": {
         "name": "Anthropic Claude",
         "url": "https://api.anthropic.com/v1/messages",
-        "models": ["claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229"],
+        "models": ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest"],
         "headers_func": lambda api_key: {
             "Content-Type": "application/json",
             "x-api-key": api_key,
@@ -807,7 +1141,7 @@ PROVIDERS = {
     "deepseek": {
         "name": "DeepSeek",
         "url": "https://api.deepseek.com/chat/completions",
-        "models": ["deepseek-chat", "deepseek-coder"],
+        "models": ["deepseek-chat", "deepseek-reasoner"],
         "headers_func": lambda api_key: {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -816,7 +1150,7 @@ PROVIDERS = {
     "groq": {
         "name": "Groq",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "models": ["llama3-8b-8192", "llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"],
+        "models": ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "qwen-qwq-32b"],
         "headers_func": lambda api_key: {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -825,7 +1159,19 @@ PROVIDERS = {
     "openrouter": {
         "name": "OpenRouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "models": ["deepseek/deepseek-r1:free","google/gemini-2.5-flash","openai/gpt-4o-mini-2024-07-18", "meta-llama/llama-3.2-1b-instruct", "arliai/qwq-32b-arliai-rpr-v1","openai/gpt-oss-20b:free", "qwen/qwen3-coder:free" ,"google/gemma-3n-e2b-it:free" ,"tencent/hunyuan-a13b-instruct:free"],
+        "models": [
+            "openrouter/free",
+            "meta-llama/llama-3.2-3b-instruct:free",
+            "openai/gpt-oss-20b:free",
+            "openai/gpt-oss-120b:free",
+            "deepseek/deepseek-r1:free",
+            "qwen/qwen3-coder:free",
+            "google/gemma-3n-e2b-it:free",
+            "openrouter/auto",
+            "openai/gpt-4o-mini-2024-07-18",
+            "google/gemini-2.5-flash",
+            "anthropic/claude-3.5-haiku"
+        ],
         "headers_func": lambda api_key: {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -893,7 +1239,7 @@ def format_messages_for_provider(messages, provider):
             "temperature": 0.7  # Sera ajouté plus tard
         }
 
-def call_ai_api(messages, provider="openai", model="gpt-3.5-turbo", max_tokens=200, temperature=0.7, api_key=""):
+def call_ai_api(messages, provider="openai", model="gpt-4.1-mini", max_tokens=200, temperature=0.7, api_key=""):
     """
     Appelle l'API du fournisseur choisi
     """
@@ -941,17 +1287,53 @@ def call_ai_api(messages, provider="openai", model="gpt-3.5-turbo", max_tokens=2
         
         # Extraire la réponse selon le fournisseur
         if provider == "gemini":
-            if 'candidates' in response_data and len(response_data['candidates']) > 0:
-                return response_data['candidates'][0]['content']['parts'][0]['text']
+            candidates = response_data.get("candidates") or []
+            if candidates:
+                c0 = candidates[0] or {}
+                content = c0.get("content") or {}
+                parts = content.get("parts") or []
+                if parts:
+                    p0 = parts[0] or {}
+                    text = p0.get("text")
+                    if isinstance(text, str) and text.strip():
+                        return text
         elif provider == "claude":
-            if 'content' in response_data and len(response_data['content']) > 0:
-                return response_data['content'][0]['text']
+            content = response_data.get("content") or []
+            if content:
+                c0 = content[0] or {}
+                text = c0.get("text")
+                if isinstance(text, str) and text.strip():
+                    return text
         else:
-            # OpenAI, DeepSeek, Groq
-            if 'choices' in response_data and len(response_data['choices']) > 0:
-                return response_data['choices'][0]['message']['content']
+            # OpenAI-compatible: OpenAI, DeepSeek, Groq, OpenRouter
+            choices = response_data.get("choices") or []
+            if choices:
+                first = choices[0] or {}
+                message = first.get("message") or {}
+                content = message.get("content")
+                # Standard content string
+                if isinstance(content, str) and content.strip():
+                    return content
+                # Some providers return content as blocks
+                if isinstance(content, list):
+                    txt_parts = []
+                    for block in content:
+                        if isinstance(block, dict):
+                            t = block.get("text")
+                            if isinstance(t, str) and t:
+                                txt_parts.append(t)
+                    if txt_parts:
+                        return "\n".join(txt_parts)
+                # Fallbacks used by some implementations
+                text = first.get("text")
+                if isinstance(text, str) and text.strip():
+                    return text
+                delta = first.get("delta") or {}
+                dcontent = delta.get("content")
+                if isinstance(dcontent, str) and dcontent.strip():
+                    return dcontent
         
-        raise Exception("Réponse API invalide")
+        raise Exception(f"Réponse API invalide ({provider}) - structure inattendue")
             
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8')
@@ -1072,10 +1454,148 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         - Punktzahl 9-10: Ausgezeichnete und vollständige Antwort → "Easy"
         
         Berücksichtigen Sie den Fragenkontext bei der Bewertung der Relevanz und Vollständigkeit der studentischen Antwort.
+        """,
+
+        "russian": f"""
+        Проанализируйте ответ студента в контексте заданного вопроса и предоставьте структурированную оценку.
+
+        Вопрос: "{question_text}"
+        Ожидаемый ответ: "{true_answer}"
+        Ответ студента: "{user_answer}"
+
+        Предоставьте оценку в формате JSON:
+        {{
+            "score": [число от 0 до 10],
+            "tips": "[конструктивная обратная связь на русском, максимум 100 слов, учитывая контекст вопроса]",
+            "review_suggestion": "[выберите из: Again, Hard, Good, Easy]"
+        }}
+
+        Критерии:
+        - 0-3: Неверный или очень неполный ответ → "Again"
+        - 4-5: Частично верный ответ с существенными ошибками → "Hard"
+        - 6-8: Верный ответ с небольшими недочетами → "Good"
+        - 9-10: Отличный и полный ответ → "Easy"
+        """,
+
+        "japanese": f"""
+        与えられた問題文の文脈に基づいて、学習者の回答を分析し、構造化された評価を返してください。
+
+        問題: "{question_text}"
+        期待される回答: "{true_answer}"
+        学習者の回答: "{user_answer}"
+
+        次のJSON形式で返してください:
+        {{
+            "score": [0から10の数値],
+            "tips": "[日本語で建設的なフィードバック。100語以内。問題文の文脈を考慮すること]",
+            "review_suggestion": "[Again, Hard, Good, Easy から選択]"
+        }}
+
+        評価基準:
+        - 0-3: 不正解、または大きく不十分 → "Again"
+        - 4-5: 部分的に正しいが重要な誤りあり → "Hard"
+        - 6-8: ほぼ正しいが軽微な不備あり → "Good"
+        - 9-10: 非常に良く、完全な回答 → "Easy"
+        """,
+
+        "chinese": f"""
+        请结合题目上下文分析学生回答，并给出结构化评估。
+
+        题目: "{question_text}"
+        期望答案: "{true_answer}"
+        学生答案: "{user_answer}"
+
+        请使用以下 JSON 格式输出:
+        {{
+            "score": [0 到 10 的数字],
+            "tips": "[中文的建设性反馈，最多100词，并结合题目上下文]",
+            "review_suggestion": "[从 Again, Hard, Good, Easy 中选择]"
+        }}
+
+        评分标准:
+        - 0-3: 错误或非常不完整 → "Again"
+        - 4-5: 部分正确但有明显错误 → "Hard"
+        - 6-8: 基本正确，有轻微不足 → "Good"
+        - 9-10: 非常优秀且完整 → "Easy"
+        """,
+
+        "korean": f"""
+        주어진 질문의 맥락에서 학생의 답변을 분석하고 구조화된 평가를 제공하세요.
+
+        질문: "{question_text}"
+        정답: "{true_answer}"
+        학생 답변: "{user_answer}"
+
+        다음 JSON 형식으로 답변하세요:
+        {{
+            "score": [0에서 10 사이 숫자],
+            "tips": "[한국어로 된 건설적인 피드백, 최대 100단어, 질문 맥락 반영]",
+            "review_suggestion": "[Again, Hard, Good, Easy 중 하나]"
+        }}
+
+        평가 기준:
+        - 0-3: 오답 또는 매우 불완전 → "Again"
+        - 4-5: 부분적으로 정답이나 중요한 오류 존재 → "Hard"
+        - 6-8: 전반적으로 정답이나 사소한 미흡함 → "Good"
+        - 9-10: 매우 우수하고 완전한 답변 → "Easy"
         """
     }
     
     return prompts.get(language, prompts["english"])
+
+def get_system_message_for_language(language):
+    system_messages = {
+        "english": "You are an educational assistant that evaluates student responses constructively and kindly. Use the question context to provide more accurate and relevant feedback.",
+        "french": "Vous êtes un assistant pédagogique qui évalue les réponses des étudiants de manière constructive et bienveillante. Utilisez le contexte de la question pour fournir des commentaires plus précis et pertinents.",
+        "spanish": "Eres un asistente educativo que evalúa las respuestas de los estudiantes de manera constructiva y amable. Usa el contexto de la pregunta para proporcionar comentarios más precisos y relevantes.",
+        "german": "Sie sind ein pädagogischer Assistent, der die Antworten der Studenten konstruktiv und freundlich bewertet. Nutzen Sie den Fragenkontext, um genauere und relevantere Rückmeldungen zu geben.",
+        "russian": "Вы образовательный ассистент. Оценивайте ответы конструктивно, доброжелательно и с учетом контекста вопроса.",
+        "japanese": "あなたは学習支援アシスタントです。問題の文脈を踏まえ、建設的で丁寧なフィードバックを返してください。",
+        "chinese": "你是一名教育助手。请结合题目上下文，以建设性且友好的方式评估学生回答。",
+        "korean": "당신은 교육용 어시스턴트입니다. 질문 맥락을 반영해 학생 답변을 친절하고 건설적으로 평가하세요.",
+    }
+    return system_messages.get(language, system_messages["english"])
+
+def build_analysis_prompt(config, language, question_text, true_answer, user_answer):
+    use_custom_prompt = bool(config.get("use_custom_prompt", False))
+    template = (config.get("custom_analysis_prompt_template", "") or "").strip()
+
+    if use_custom_prompt and template:
+        rendered = template
+        replacements = {
+            "{question}": question_text or "",
+            "{expected_answer}": true_answer or "",
+            "{user_answer}": user_answer or "",
+            "{language}": language or "english",
+        }
+        for token, value in replacements.items():
+            rendered = rendered.replace(token, value)
+        return rendered
+
+    return get_language_specific_prompt(language, question_text, true_answer, user_answer)
+
+def get_language_name(language_key: str) -> str:
+    mapping = {
+        "english": "English",
+        "french": "French",
+        "spanish": "Spanish",
+        "german": "German",
+        "russian": "Russian",
+        "japanese": "Japanese",
+        "chinese": "Chinese",
+        "korean": "Korean",
+    }
+    return mapping.get(language_key, "English")
+
+def get_language_lock_instruction(language_key: str) -> str:
+    lang_name = get_language_name(language_key)
+    return (
+        f'\n\nIMPORTANT OUTPUT LANGUAGE RULES:\n'
+        f'- Write "tips" strictly in {lang_name}.\n'
+        f'- Keep "review_suggestion" in English enum values only: Again, Hard, Good, Easy.\n'
+        f'- Do not use another language for "tips".\n'
+        f'- Return valid JSON only.'
+    )
 
 def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: str) -> dict:
     """
@@ -1085,7 +1605,7 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
     config = get_config()
     
     if not config.get("enabled", True):
-        return {"score": 5, "tips": "IA désactivée", "review_suggestion": "Good"}
+        return make_analysis_unavailable("AI disabled", config.get("language", "english"))
     
     provider = config.get("provider", "openai")
     language = config.get("language", "english")
@@ -1094,20 +1614,11 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
     
     api_key = config.get(api_key_field, "").strip()
     if not api_key:
-        return {"score": 5, "tips": f"Clé API {PROVIDERS[provider]['name']} non configurée", "review_suggestion": "Good"}
+        return make_analysis_unavailable(f"{PROVIDERS[provider]['name']} API key not configured", language)
     
-    # **MODIFIÉ: Utiliser le prompt avec contexte de question selon la langue configurée**
-    prompt = get_language_specific_prompt(language, question_text, true_answer, user_answer)
-    
-    # Message système selon la langue
-    system_messages = {
-        "english": "You are an educational assistant that evaluates student responses constructively and kindly. Use the question context to provide more accurate and relevant feedback.",
-        "french": "Vous êtes un assistant pédagogique qui évalue les réponses des étudiants de manière constructive et bienveillante. Utilisez le contexte de la question pour fournir des commentaires plus précis et pertinents.",
-        "spanish": "Eres un asistente educativo que evalúa las respuestas de los estudiantes de manera constructiva y amable. Usa el contexto de la pregunta para proporcionar comentarios más precisos y relevantes.",
-        "german": "Sie sind ein pädagogischer Assistent, der die Antworten der Studenten konstruktiv und freundlich bewertet. Nutzen Sie den Fragenkontext, um genauere und relevantere Rückmeldungen zu geben."
-    }
-    
-    system_message = system_messages.get(language, system_messages["english"])
+    prompt = build_analysis_prompt(config, language, question_text, true_answer, user_answer) + get_language_lock_instruction(language)
+    custom_system_prompt = (config.get("custom_system_prompt", "") or "").strip()
+    system_message = custom_system_prompt or get_system_message_for_language(language)
 
     messages = [
         {"role": "system", "content": system_message},
@@ -1142,6 +1653,7 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
                 # Valider la suggestion de révision
                 if result["review_suggestion"] not in ["Again", "Hard", "Good", "Easy"]:
                     result["review_suggestion"] = "Good"
+                result["scored"] = True
                 return result
         except (json.JSONDecodeError, ValueError, KeyError):
             pass
@@ -1162,22 +1674,23 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
                 except:
                     pass
         
-        return {"score": score, "tips": ai_response[:300] + "...", "review_suggestion": review_suggestion}
+        return {"scored": True, "score": score, "tips": ai_response[:300] + "...", "review_suggestion": review_suggestion}
         
     except Exception as e:
         print(f"AI Analysis Error: {str(e)}")  # Pour debugging
-        return {"score": 5, "tips": f"Erreur d'analyse {PROVIDERS[provider]['name']}: {str(e)}", "review_suggestion": "Good"}
+        return make_analysis_unavailable(f"{PROVIDERS[provider]['name']}: {str(e)}", language)
 
 def setup_config_menu():
     """Configure le menu de configuration"""
     def open_config():
         config = get_config()
+        ui = get_config_ui_texts(config)
         
         # Interface simple pour la configuration
-        from aqt.qt import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QSpinBox, QDoubleSpinBox, QTabWidget, QWidget
+        from aqt.qt import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QTextEdit, QApplication
         
         dialog = QDialog(mw)
-        dialog.setWindowTitle("Configuration IA Multi-Fournisseurs")
+        dialog.setWindowTitle(ui["window_title"])
         dialog.setMinimumWidth(550)
         dialog.setMinimumHeight(700)
         
@@ -1188,11 +1701,11 @@ def setup_config_menu():
         
         # Display options
         compare_group = QVBoxLayout()
-        show_anki_chk = QCheckBox('Afficher la "Comparaison par défaut d\'Anki"')
+        show_anki_chk = QCheckBox(ui["show_anki_compare"])
         show_anki_chk.setChecked(config.get("show_anki_compare", True))
         compare_group.addWidget(show_anki_chk)
 
-        show_code_chk = QCheckBox('Afficher le "code_block" (comparaison code)')
+        show_code_chk = QCheckBox(ui["show_code_compare"])
         show_code_chk.setChecked(config.get("show_code_compare", True))
         compare_group.addWidget(show_code_chk)
 
@@ -1200,7 +1713,7 @@ def setup_config_menu():
         
         # Sélecteur de fournisseur principal
         provider_layout = QHBoxLayout()
-        provider_layout.addWidget(QLabel("AI Provider:"))
+        provider_layout.addWidget(QLabel(ui["ai_provider"]))
         provider_combo = QComboBox()
         provider_items = [(key, value["name"]) for key, value in PROVIDERS.items()]
         for key, name in provider_items:
@@ -1212,9 +1725,9 @@ def setup_config_menu():
         provider_layout.addWidget(provider_combo)
         general_group.addLayout(provider_layout)
         
-        # Sélecteur de langue
+        # Analysis language selector
         language_layout = QHBoxLayout()
-        language_layout.addWidget(QLabel("Language:"))
+        language_layout.addWidget(QLabel(ui["analysis_language"]))
         language_combo = QComboBox()
         for lang_key, lang_info in LANGUAGES.items():
             language_combo.addItem(lang_info["name"], lang_key)
@@ -1226,13 +1739,13 @@ def setup_config_menu():
         general_group.addLayout(language_layout)
         
         # Activation
-        enabled_checkbox = QCheckBox("Enable AI Analysis")
+        enabled_checkbox = QCheckBox(ui["enable_ai"])
         enabled_checkbox.setChecked(config.get("enabled", True))
         general_group.addWidget(enabled_checkbox)
         
         # Max tokens
         tokens_layout = QHBoxLayout()
-        tokens_layout.addWidget(QLabel("Max tokens:"))
+        tokens_layout.addWidget(QLabel(ui["max_tokens"]))
         tokens_spin = QSpinBox()
         tokens_spin.setRange(300, 4000)
         tokens_spin.setValue(max(config.get("max_tokens", 300), 300))
@@ -1241,13 +1754,97 @@ def setup_config_menu():
         
         # Temperature
         temp_layout = QHBoxLayout()
-        temp_layout.addWidget(QLabel("Temperature (0-1):"))
+        temp_layout.addWidget(QLabel(ui["temperature"]))
         temp_spin = QDoubleSpinBox()
         temp_spin.setRange(0.0, 1.0)
         temp_spin.setSingleStep(0.1)
         temp_spin.setValue(config.get("temperature", 0.7))
         temp_layout.addWidget(temp_spin)
         general_group.addLayout(temp_layout)
+
+        use_custom_prompt_chk = QCheckBox(ui["use_custom_prompt"])
+        use_custom_prompt_chk.setChecked(config.get("use_custom_prompt", False))
+        general_group.addWidget(use_custom_prompt_chk)
+
+        custom_system_label = QLabel(ui["custom_system_prompt"])
+        general_group.addWidget(custom_system_label)
+        custom_system_input = QTextEdit()
+        custom_system_input.setPlainText(config.get("custom_system_prompt", ""))
+        custom_system_input.setMinimumHeight(80)
+        general_group.addWidget(custom_system_input)
+
+        custom_template_label = QLabel(ui["custom_analysis_prompt"])
+        general_group.addWidget(custom_template_label)
+        custom_template_input = QTextEdit()
+        custom_template_input.setPlainText(config.get("custom_analysis_prompt_template", ""))
+        custom_template_input.setMinimumHeight(140)
+        general_group.addWidget(custom_template_input)
+
+        reset_custom_prompt_btn = QPushButton(ui.get("reset_custom_prompt", "Reset prompts to defaults"))
+        general_group.addWidget(reset_custom_prompt_btn)
+        copy_default_prompt_btn = QPushButton(ui.get("copy_default_prompts", "Copy default prompts"))
+        general_group.addWidget(copy_default_prompt_btn)
+
+        def update_default_prompt_placeholders():
+            lang_key = language_combo.currentData() or "english"
+            localized_system = get_system_message_for_language(lang_key)
+            localized_template = get_language_specific_prompt(
+                lang_key,
+                "{question}",
+                "{expected_answer}",
+                "{user_answer}",
+            )
+            custom_system_input.setPlaceholderText(ui["custom_system_placeholder"] + "\n\n" + localized_system)
+            custom_template_input.setPlaceholderText(localized_template or DEFAULT_CUSTOM_ANALYSIS_PROMPT_TEMPLATE)
+
+        def reset_custom_prompts_to_defaults():
+            lang_key = language_combo.currentData() or "english"
+            custom_system_input.setPlainText(get_system_message_for_language(lang_key))
+            custom_template_input.setPlainText(
+                get_language_specific_prompt(
+                    lang_key,
+                    "{question}",
+                    "{expected_answer}",
+                    "{user_answer}",
+                )
+            )
+
+        def copy_default_prompts_to_clipboard():
+            lang_key = language_combo.currentData() or "english"
+            default_system = get_system_message_for_language(lang_key)
+            default_template = get_language_specific_prompt(
+                lang_key,
+                "{question}",
+                "{expected_answer}",
+                "{user_answer}",
+            )
+            payload = (
+                "=== Default system prompt ===\n"
+                f"{default_system}\n\n"
+                "=== Default analysis prompt template ===\n"
+                f"{default_template}"
+            )
+            QApplication.clipboard().setText(payload)
+            showInfo(ui.get("copied_default_prompts", "Default prompts copied to clipboard."))
+
+        def update_custom_prompt_inputs():
+            enabled = use_custom_prompt_chk.isChecked()
+            custom_system_input.setReadOnly(not enabled)
+            custom_template_input.setReadOnly(not enabled)
+            reset_custom_prompt_btn.setEnabled(enabled)
+            if enabled:
+                custom_system_input.setStyleSheet("")
+                custom_template_input.setStyleSheet("")
+            else:
+                custom_system_input.setStyleSheet("background: #f2f2f2; color: #6b6b6b;")
+                custom_template_input.setStyleSheet("background: #f2f2f2; color: #6b6b6b;")
+
+        reset_custom_prompt_btn.clicked.connect(reset_custom_prompts_to_defaults)
+        copy_default_prompt_btn.clicked.connect(copy_default_prompts_to_clipboard)
+        language_combo.currentTextChanged.connect(update_default_prompt_placeholders)
+        update_default_prompt_placeholders()
+        use_custom_prompt_chk.toggled.connect(update_custom_prompt_inputs)
+        update_custom_prompt_inputs()
         
         layout.addLayout(general_group)
         
@@ -1257,6 +1854,7 @@ def setup_config_menu():
         # Stockage des widgets pour récupérer les valeurs
         api_inputs = {}
         model_combos = {}
+        builtin_models_by_provider = {}
         tab_widgets = {}
         
         for provider_key, provider_info in PROVIDERS.items():
@@ -1285,13 +1883,52 @@ def setup_config_menu():
             model_layout = QHBoxLayout()
             model_layout.addWidget(QLabel("Model:"))
             model_combo = QComboBox()
-            model_combo.addItems(provider_info["models"])
+            builtin_models = list(provider_info["models"])
+            builtin_models_by_provider[provider_key] = set(builtin_models)
+            custom_models = config.get(f"{provider_key}_custom_models", [])
+            if not isinstance(custom_models, list):
+                custom_models = []
+            merged_models = list(builtin_models)
+            for cm in custom_models:
+                cm = str(cm).strip()
+                if cm and cm not in merged_models:
+                    merged_models.append(cm)
+            model_combo.addItems(merged_models)
+            model_combo.setEditable(True)
             current_model = config.get(f"{provider_key}_model", provider_info["models"][0])
-            if current_model in provider_info["models"]:
+            if current_model in merged_models:
                 model_combo.setCurrentText(current_model)
+            else:
+                model_combo.setEditText(current_model)
             model_layout.addWidget(model_combo)
             tab_layout.addLayout(model_layout)
             model_combos[provider_key] = model_combo
+
+            add_model_layout = QHBoxLayout()
+            custom_model_input = QLineEdit()
+            custom_model_input.setPlaceholderText(ui.get("model_id_placeholder", "provider/model-id"))
+            add_model_btn = QPushButton(ui.get("add_model_id", "Add model ID"))
+            add_model_layout.addWidget(custom_model_input)
+            add_model_layout.addWidget(add_model_btn)
+            tab_layout.addLayout(add_model_layout)
+
+            def add_model_id_to_combo(_checked=False, pk=provider_key, inp=custom_model_input):
+                model_id = inp.text().strip()
+                if not model_id:
+                    return
+                combo = model_combos[pk]
+                found = False
+                for i in range(combo.count()):
+                    if combo.itemText(i) == model_id:
+                        found = True
+                        combo.setCurrentIndex(i)
+                        break
+                if not found:
+                    combo.addItem(model_id)
+                    combo.setCurrentText(model_id)
+                inp.clear()
+
+            add_model_btn.clicked.connect(add_model_id_to_combo)
             
             # Instructions spécifiques au fournisseur
             instructions = {
@@ -1300,7 +1937,7 @@ def setup_config_menu():
                 "claude": "Get your API key at: https://console.anthropic.com/",
                 "deepseek": "Get your API key at: https://platform.deepseek.com/api_keys",
                 "groq": "Get your API key at: https://console.groq.com/keys",
-                "openrouter": "Get your API key at: https://openrouter.ai/settings/keys"
+                "openrouter": "Get your API key at: https://openrouter.ai/settings/keys\nTip: use openrouter/free for maximum compatibility."
             }
             
             info_label = QLabel(instructions.get(provider_key, ""))
@@ -1330,7 +1967,7 @@ def setup_config_menu():
         update_tab_states()
         
         # Test de connexion
-        test_button = QPushButton("Test API Connection")
+        test_button = QPushButton(ui["test_api"])
         layout.addWidget(test_button)
         
         def test_api():
@@ -1338,27 +1975,51 @@ def setup_config_menu():
             api_key = api_inputs[current_provider_data].text().strip()
             
             if not api_key:
-                showWarning("Please enter an API key to test the connection.")
+                showWarning(ui["enter_api_key"])
                 return
             
             # Changer le texte du bouton pour indiquer le test en cours
             original_text = test_button.text()
-            test_button.setText("Testing...")
+            test_button.setText(ui["testing"])
             test_button.setEnabled(False)
             
             try:
                 messages = [{"role": "user", "content": "Respond simply 'OK' to test the connection."}]
+                selected_model = model_combos[current_provider_data].currentText()
                 response = call_ai_api(
                     messages=messages,
                     provider=current_provider_data,
-                    model=model_combos[current_provider_data].currentText(),
+                    model=selected_model,
                     max_tokens=10,
                     temperature=0.1,
                     api_key=api_key
                 )
-                showInfo(f"✅ Connection successful with {PROVIDERS[current_provider_data]['name']}!\n\nResponse: {response[:50]}...")
+                showInfo("✅ " + ui["connection_success"].format(provider=PROVIDERS[current_provider_data]["name"], response=response[:50] + "..."))
             except Exception as e:
-                showWarning(f"❌ Connection error with {PROVIDERS[current_provider_data]['name']}:\n\n{str(e)}")
+                # OpenRouter models can be intermittently unavailable depending on providers.
+                # Retry with the free router to avoid false-negative config tests.
+                if current_provider_data == "openrouter":
+                    try:
+                        response = call_ai_api(
+                            messages=messages,
+                            provider=current_provider_data,
+                            model="openrouter/free",
+                            max_tokens=10,
+                            temperature=0.1,
+                            api_key=api_key
+                        )
+                        showInfo(
+                            "✅ "
+                            + ui["connection_success"].format(
+                                provider=PROVIDERS[current_provider_data]["name"],
+                                response=response[:50] + "...",
+                            )
+                            + f"\n\nSelected model failed, but fallback 'openrouter/free' worked.\nOriginal error: {str(e)}"
+                        )
+                        return
+                    except Exception:
+                        pass
+                showWarning("❌ " + ui["connection_error"].format(provider=PROVIDERS[current_provider_data]["name"], error=str(e)))
             finally:
                 # Restaurer le bouton
                 test_button.setText(original_text)
@@ -1368,8 +2029,8 @@ def setup_config_menu():
         
         # Boutons
         button_layout = QHBoxLayout()
-        save_button = QPushButton("Save")
-        cancel_button = QPushButton("Cancel")
+        save_button = QPushButton(ui["save"])
+        cancel_button = QPushButton(ui["cancel"])
         button_layout.addWidget(save_button)
         button_layout.addWidget(cancel_button)
         layout.addLayout(button_layout)
@@ -1380,7 +2041,10 @@ def setup_config_menu():
                 "language": language_combo.currentData(),
                 "enabled": enabled_checkbox.isChecked(),
                 "max_tokens": tokens_spin.value(),
-                "temperature": temp_spin.value()
+                "temperature": temp_spin.value(),
+                "use_custom_prompt": use_custom_prompt_chk.isChecked(),
+                "custom_system_prompt": custom_system_input.toPlainText().strip(),
+                "custom_analysis_prompt_template": custom_template_input.toPlainText().strip(),
             }
             new_config["show_anki_compare"] = show_anki_chk.isChecked()
             new_config["show_code_compare"] = show_code_chk.isChecked()
@@ -1389,9 +2053,17 @@ def setup_config_menu():
             for provider_key in PROVIDERS.keys():
                 new_config[f"{provider_key}_api_key"] = api_inputs[provider_key].text()
                 new_config[f"{provider_key}_model"] = model_combos[provider_key].currentText()
+                custom_list = []
+                combo = model_combos[provider_key]
+                builtin = builtin_models_by_provider.get(provider_key, set())
+                for i in range(combo.count()):
+                    item = combo.itemText(i).strip()
+                    if item and item not in builtin and item not in custom_list:
+                        custom_list.append(item)
+                new_config[f"{provider_key}_custom_models"] = custom_list
             
             save_config(new_config)
-            showInfo("Configuration saved!")
+            showInfo(ui["saved"])
             dialog.accept()
         
         save_button.clicked.connect(save_and_close)
@@ -1406,7 +2078,7 @@ def setup_config_menu():
             dialog.exec_()  # PyQt5
     
     # Ajouter au menu Tools
-    action = mw.form.menuTools.addAction("AI Multi-Provider Configuration")
+    action = mw.form.menuTools.addAction(get_config_ui_texts(get_config())["menu_title"])
     action.triggered.connect(open_config)
 
 # Commande pour rafraîchir l'analyse IA
@@ -1455,8 +2127,6 @@ gui_hooks.card_will_show.append(_to_textarea_on_question)
 gui_hooks.card_will_show.append(_code_friendly_diff_on_answer)
 gui_hooks.reviewer_will_compare_answer.append(store_ai_analysis)
 gui_hooks.reviewer_will_render_compared_answer.append(render_enhanced_comparison)
-# enable briefly
-gui_hooks.card_will_show.append(_debug_dump_front)
 
 # Initialiser lors du chargement
 init()
