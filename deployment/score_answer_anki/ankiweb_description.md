@@ -2,8 +2,8 @@
 
 AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedback, configurable prompts, and multi-provider support.
 
-![good evaluation](images/good_2.png)
-![bad evaluation](images/bad_answer.png)
+![good evaluation](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/good_2.png)
+![bad evaluation](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/bad_answer.png)
 
 ## What This Add-on Does
 
@@ -59,7 +59,7 @@ Analysis feedback and UI labels currently support:
 
 ## Quick Start
 
-![Config access from Tools](images/config_botton_from_tools.png)
+![Config access from Tools](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/config_botton_from_tools.png)
 
 1. Open `Tools -> AI Multi-Provider Configuration`.
 2. Select provider and model.
@@ -160,21 +160,10 @@ If selected model test fails, the add-on may successfully validate via `openrout
 
 ## Screenshots
 
-![Main feedback](images/very_good.png)
-![Loading state](images/analysis_by_AI.png)
-![Config UI 1](images/config.png)
-![Config UI 2](images/config_0.png)
-![Latest changes](images/changes_made_languages_customprompt_modeid.png)
-![Config access from Tools](images/config_botton_from_tools.png)
-
-## Contributing
-
-Issues and improvements are welcome.  
-When reporting bugs, include:
-
-- Anki version
-- add-on version/commit
-- provider + model ID
-- exact error text
-- steps to reproduce
+![Main feedback](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/very_good.png)
+![Loading state](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/analysis_by_AI.png)
+![Config UI 1](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/config.png)
+![Config UI 2](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/config_0.png)
+![Latest changes](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/changes_made_languages_customprompt_modeid.png)
+![Config access from Tools](https://raw.githubusercontent.com/paulo16/score_answer_anki/main/images/config_botton_from_tools.png)
 
