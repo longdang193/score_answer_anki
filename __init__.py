@@ -6,6 +6,7 @@ from aqt import gui_hooks
 ai_analysis_cache = {}
 is_analyzing = {}
 analysis_results = {}
+current_analysis_context = {}
 
 # translations and label helpers
 # Map your config["language"] key -> labels
@@ -353,8 +354,17 @@ def make_analysis_unavailable(reason: str, language: str = "english") -> dict:
         "scored": False,
         "score": None,
         "tips": tips,
-        "review_suggestion": None,
     }
+
+
+def build_analysis_cache_key(question_text: str, true_answer: str, user_answer: str) -> str:
+    return f"{hash(question_text or '')}_{hash(true_answer or '')}_{hash(user_answer or '')}"
+
+
+def invalidate_analysis_state(cache_key: str) -> None:
+    ai_analysis_cache.pop(cache_key, None)
+    analysis_results.pop(cache_key, None)
+    is_analyzing.pop(cache_key, None)
 
 def store_ai_analysis(expected_provided_tuple, type_pattern):
     """
@@ -365,7 +375,14 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
     user_answer = expected_provided_tuple[1] or ""
 
     question_text = get_current_question()
-    cache_key = f"{hash(question_text)}_{hash(true_answer)}_{hash(user_answer)}"
+    cache_key = build_analysis_cache_key(question_text, true_answer, user_answer)
+    current_analysis_context.update(
+        {
+            "expected_provided_tuple": (true_answer, user_answer),
+            "type_pattern": type_pattern,
+            "cache_key": cache_key,
+        }
+    )
 
     # Déjà en cache
     if cache_key in ai_analysis_cache:
@@ -491,7 +508,14 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     
     # **MODIFIÉ: Inclure la question dans la clé de cache**
     question_text = get_current_question()
-    cache_key = f"{hash(question_text)}_{hash(initial_expected)}_{hash(initial_provided)}"
+    cache_key = build_analysis_cache_key(question_text, initial_expected, initial_provided)
+    current_analysis_context.update(
+        {
+            "expected_provided_tuple": (initial_expected or "", initial_provided or ""),
+            "type_pattern": type_pattern,
+            "cache_key": cache_key,
+        }
+    )
     print(f"Rendering comparison for key: {cache_key}")
     
     # Vérification simplifiée - si l'analyse est en cours, afficher un message simple
@@ -572,43 +596,13 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
         score_bg = "#e3f2fd"
         score_icon = "🌟"
     
-    # Déterminer la couleur de la suggestion
-    suggestion = ai_analysis.get('review_suggestion', 'Good') if is_scored else None
-    suggestion_colors = {
-        "Again": ("#f44336", "#ffebee", "🔄"),
-        "Hard": ("#ff9800", "#fff3e0", "🔥"), 
-        "Good": ("#4caf50", "#e8f5e8", "👍"),
-        "Easy": ("#2196f3", "#e3f2fd", "😎")
-    }
-    suggestion_color, suggestion_bg, suggestion_icon = suggestion_colors.get(suggestion, ("#4caf50", "#e8f5e8", "👍"))
     score_badge = f"{score_icon} {score}/10" if is_scored else f"{score_icon} N/A"
-    suggestion_section = f"""
-            <div style="background: linear-gradient(135deg, {suggestion_bg}, {suggestion_bg}dd); border: 2px solid {suggestion_color}; border-radius: 12px; padding: 16px;">
-                <div style="display: flex; align-items: center; justify-content: space-between;">
-                    <span style="color: #2c3e50; font-weight: 700; font-size: 16px; display: flex; align-items: center;">
-                        🎯 {texts.get('review_suggestion', 'Review Suggestion')}:
-                    </span>
-                    <span style="background: linear-gradient(135deg, {suggestion_color}, {suggestion_color}dd); color: white; padding: 10px 18px; border-radius: 20px; font-weight: bold; font-size: 15px; box-shadow: 0 3px 10px rgba(0,0,0,0.2);">
-                        {suggestion_icon} {texts.get('suggestions', {}).get(suggestion, suggestion)}
-                    </span>
-                </div>
+    regenerate_section = f"""
+            <div style="background: linear-gradient(135deg, rgba(255,255,255,0.82), rgba(255,255,255,0.92)); border: 2px solid {score_color}; border-radius: 12px; padding: 16px; text-align: right;">
+                <button onclick="if (typeof pycmd === 'function') pycmd('regenerate_ai_analysis'); return false;" style="background: linear-gradient(135deg, {score_color}, {score_color}dd); color: white; padding: 10px 18px; border-radius: 20px; border: none; font-weight: bold; font-size: 15px; box-shadow: 0 3px 10px rgba(0,0,0,0.2); cursor: pointer;">
+                    🔄 Regenerate Analysis
+                </button>
             </div>
-    """ if is_scored else ""
-    
-    # **NOUVEAU: Afficher la question pour plus de contexte si elle existe**
-    question_display = ""
-    if question_text and len(question_text.strip()) > 0:
-        # Limiter la longueur de la question affichée
-        display_question = question_text[:200] + "..." if len(question_text) > 200 else question_text
-        question_display = f"""
-        <div style="background: rgba(255,255,255,0.9); border: 2px solid #e0e0e0; border-radius: 12px; padding: 15px; margin-bottom: 15px;">
-            <h4 style="color: #2c3e50; margin: 0 0 8px 0; font-size: 16px; font-weight: 700; display: flex; align-items: center;">
-                ❓ {texts.get('question_context', 'Question Context')}:
-            </h4>
-            <p style="color: #34495e; margin: 0; line-height: 1.4; font-size: 14px; font-style: italic;">
-                {display_question}
-            </p>
-        </div>
         """
     
     # Affichage alternatif fidèle pour le code (en plus du diff Anki)
@@ -643,8 +637,6 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
                 </div>
             </div>
             
-            {question_display}
-            
             <div style="margin-bottom: 20px; padding: 15px; background: rgba(255,255,255,0.7); border-radius: 12px; border-left: 4px solid {score_color};">
                 <h4 style="color: #2c3e50; margin: 0 0 10px 0; font-size: clamp(15px, 4vw, 17px); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center;">
                     💡 {texts.get('improvement_tips', 'Improvement Tips')}
@@ -654,7 +646,7 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
                 </p>
             </div>
             
-            {suggestion_section}
+            {regenerate_section}
         </div>
     </div>
     """
@@ -895,13 +887,11 @@ Language: "{language}"
 Return ONLY valid JSON with this schema:
 {
   "score": 0,
-  "tips": "short constructive feedback",
-  "review_suggestion": "Again"
+  "tips": "short constructive feedback"
 }
 
 Rules:
 - score is an integer from 0 to 10
-- review_suggestion must be one of: Again, Hard, Good, Easy
 - tips should be concise and actionable
 """
 
@@ -914,7 +904,8 @@ CONFIG_UI_TEXTS = {
         "ai_provider": "AI Provider:",
         "analysis_language": "Analysis language:",
         "enable_ai": "Enable AI analysis",
-        "max_tokens": "Max tokens:",
+        "max_tokens": "Feedback length:",
+        "feedback_length_help": "Lower = shorter, faster feedback.",
         "temperature": "Temperature (0-1):",
         "use_custom_prompt": "Use custom prompt template",
         "custom_system_prompt": "Custom system prompt (optional):",
@@ -942,7 +933,7 @@ CONFIG_UI_TEXTS = {
         "ai_provider": "Fournisseur IA :",
         "analysis_language": "Langue d'analyse :",
         "enable_ai": "Activer l'analyse IA",
-        "max_tokens": "Max tokens :",
+        "max_tokens": "Feedback length :",
         "temperature": "Temperature (0-1) :",
         "use_custom_prompt": "Utiliser un prompt personnalise",
         "custom_system_prompt": "Prompt systeme personnalise (optionnel) :",
@@ -970,7 +961,7 @@ CONFIG_UI_TEXTS = {
         "ai_provider": "Proveedor de IA:",
         "analysis_language": "Idioma de analisis:",
         "enable_ai": "Activar analisis IA",
-        "max_tokens": "Max tokens:",
+        "max_tokens": "Feedback length:",
         "temperature": "Temperatura (0-1):",
         "use_custom_prompt": "Usar plantilla de prompt personalizada",
         "custom_system_prompt": "Prompt de sistema personalizado (opcional):",
@@ -993,7 +984,7 @@ CONFIG_UI_TEXTS = {
         "ai_provider": "KI-Anbieter:",
         "analysis_language": "Analysesprache:",
         "enable_ai": "KI-Analyse aktivieren",
-        "max_tokens": "Max Tokens:",
+        "max_tokens": "Feedback length:",
         "temperature": "Temperatur (0-1):",
         "use_custom_prompt": "Benutzerdefinierte Prompt-Vorlage verwenden",
         "custom_system_prompt": "Benutzerdefinierter System-Prompt (optional):",
@@ -1016,7 +1007,7 @@ CONFIG_UI_TEXTS = {
         "ai_provider": "Провайдер ИИ:",
         "analysis_language": "Язык анализа:",
         "enable_ai": "Включить анализ ИИ",
-        "max_tokens": "Макс. токенов:",
+        "max_tokens": "Feedback length:",
         "temperature": "Температура (0-1):",
         "use_custom_prompt": "Использовать пользовательский шаблон промпта",
         "custom_system_prompt": "Пользовательский системный промпт (опционально):",
@@ -1039,7 +1030,7 @@ CONFIG_UI_TEXTS = {
         "ai_provider": "AI プロバイダー:",
         "analysis_language": "分析言語:",
         "enable_ai": "AI 分析を有効化",
-        "max_tokens": "最大トークン:",
+        "max_tokens": "Feedback length:",
         "temperature": "温度 (0-1):",
         "use_custom_prompt": "カスタムプロンプトテンプレートを使用",
         "custom_system_prompt": "カスタムシステムプロンプト (任意):",
@@ -1062,7 +1053,7 @@ CONFIG_UI_TEXTS = {
         "ai_provider": "AI 提供商：",
         "analysis_language": "分析语言：",
         "enable_ai": "启用 AI 分析",
-        "max_tokens": "最大 tokens：",
+        "max_tokens": "Feedback length:",
         "temperature": "温度 (0-1)：",
         "use_custom_prompt": "使用自定义提示词模板",
         "custom_system_prompt": "自定义系统提示词（可选）：",
@@ -1085,7 +1076,7 @@ CONFIG_UI_TEXTS = {
         "ai_provider": "AI 제공자:",
         "analysis_language": "분석 언어:",
         "enable_ai": "AI 분석 사용",
-        "max_tokens": "최대 토큰:",
+        "max_tokens": "Feedback length:",
         "temperature": "온도 (0-1):",
         "use_custom_prompt": "사용자 정의 프롬프트 템플릿 사용",
         "custom_system_prompt": "사용자 정의 시스템 프롬프트 (선택):",
@@ -1425,15 +1416,14 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         Please provide your evaluation in the following JSON format:
         {{
             "score": [number from 0 to 10],
-            "tips": "[constructive feedback in English, maximum 100 words, considering the question context]",
-            "review_suggestion": "[choose from: Again, Hard, Good, Easy]"
+            "tips": "[constructive feedback in English, maximum 100 words, considering the question context]"
         }}
 
         Evaluation criteria:
-        - Score 0-3: Incorrect or very incomplete answer → "Again"
-        - Score 4-5: Partially correct but with significant errors → "Hard"  
-        - Score 6-8: Correct answer with minor imperfections → "Good"
-        - Score 9-10: Excellent and complete answer → "Easy"
+        - Score 0-3: Incorrect or very incomplete answer
+        - Score 4-5: Partially correct but with significant errors
+        - Score 6-8: Correct answer with minor imperfections
+        - Score 9-10: Excellent and complete answer
         
         Consider the question context when evaluating the relevance and completeness of the student's response.
         """,
@@ -1448,8 +1438,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         Veuillez fournir votre évaluation au format JSON suivant:
         {{
             "score": [nombre de 0 à 10],
-            "tips": "[conseils constructifs en français, maximum 100 mots, en tenant compte du contexte de la question]",
-            "review_suggestion": "[choisir parmi: Again, Hard, Good, Easy]"
+            "tips": "[conseils constructifs en français, maximum 100 mots, en tenant compte du contexte de la question]"
         }}
 
         Critères d'évaluation:
@@ -1471,8 +1460,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         Por favor proporciona tu evaluación en el siguiente formato JSON:
         {{
             "score": [número del 0 al 10],
-            "tips": "[comentarios constructivos en español, máximo 100 palabras, considerando el contexto de la pregunta]",
-            "review_suggestion": "[elegir entre: Again, Hard, Good, Easy]"
+            "tips": "[comentarios constructivos en español, máximo 100 palabras, considerando el contexto de la pregunta]"
         }}
 
         Criterios de evaluación:
@@ -1494,8 +1482,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         Bitte geben Sie Ihre Bewertung im folgenden JSON-Format an:
         {{
             "score": [Zahl von 0 bis 10],
-            "tips": "[konstruktives Feedback auf Deutsch, maximal 100 Wörter, unter Berücksichtigung des Fragenkontexts]",
-            "review_suggestion": "[wählen Sie aus: Again, Hard, Good, Easy]"
+            "tips": "[konstruktives Feedback auf Deutsch, maximal 100 Wörter, unter Berücksichtigung des Fragenkontexts]"
         }}
 
         Bewertungskriterien:
@@ -1517,8 +1504,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         Предоставьте оценку в формате JSON:
         {{
             "score": [число от 0 до 10],
-            "tips": "[конструктивная обратная связь на русском, максимум 100 слов, учитывая контекст вопроса]",
-            "review_suggestion": "[выберите из: Again, Hard, Good, Easy]"
+            "tips": "[конструктивная обратная связь на русском, максимум 100 слов, учитывая контекст вопроса]"
         }}
 
         Критерии:
@@ -1538,8 +1524,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         次のJSON形式で返してください:
         {{
             "score": [0から10の数値],
-            "tips": "[日本語で建設的なフィードバック。100語以内。問題文の文脈を考慮すること]",
-            "review_suggestion": "[Again, Hard, Good, Easy から選択]"
+            "tips": "[日本語で建設的なフィードバック。100語以内。問題文の文脈を考慮すること]"
         }}
 
         評価基準:
@@ -1559,8 +1544,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         请使用以下 JSON 格式输出:
         {{
             "score": [0 到 10 的数字],
-            "tips": "[中文的建设性反馈，最多100词，并结合题目上下文]",
-            "review_suggestion": "[从 Again, Hard, Good, Easy 中选择]"
+            "tips": "[中文的建设性反馈，最多100词，并结合题目上下文]"
         }}
 
         评分标准:
@@ -1580,8 +1564,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
         다음 JSON 형식으로 답변하세요:
         {{
             "score": [0에서 10 사이 숫자],
-            "tips": "[한국어로 된 건설적인 피드백, 최대 100단어, 질문 맥락 반영]",
-            "review_suggestion": "[Again, Hard, Good, Easy 중 하나]"
+            "tips": "[한국어로 된 건설적인 피드백, 최대 100단어, 질문 맥락 반영]"
         }}
 
         평가 기준:
@@ -1643,7 +1626,6 @@ def get_language_lock_instruction(language_key: str) -> str:
     return (
         f'\n\nIMPORTANT OUTPUT LANGUAGE RULES:\n'
         f'- Write "tips" strictly in {lang_name}.\n'
-        f'- Keep "review_suggestion" in English enum values only: Again, Hard, Good, Easy.\n'
         f'- Do not use another language for "tips".\n'
         f'- Return valid JSON only.'
     )
@@ -1707,12 +1689,9 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
             
             result = json.loads(clean_response)
             # Valider les champs requis
-            if all(key in result for key in ["score", "tips", "review_suggestion"]):
+            if all(key in result for key in ["score", "tips"]):
                 # Valider le score
                 result["score"] = max(0, min(10, int(result["score"])))
-                # Valider la suggestion de révision
-                if result["review_suggestion"] not in ["Again", "Hard", "Good", "Easy"]:
-                    result["review_suggestion"] = "Good"
                 result["scored"] = True
                 return result
         except (json.JSONDecodeError, ValueError, KeyError):
@@ -1722,7 +1701,6 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
         lines = ai_response.split('\n')
         score = 5
         tips = "Analyse disponible dans la réponse complète"
-        review_suggestion = "Good"
         
         for line in lines:
             if 'score' in line.lower():
@@ -1734,7 +1712,7 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
                 except:
                     pass
         
-        return {"scored": True, "score": score, "tips": ai_response[:300] + "...", "review_suggestion": review_suggestion}
+        return {"scored": True, "score": score, "tips": ai_response[:300] + "..."}
         
     except Exception as e:
         print(f"AI Analysis Error: {str(e)}")  # Pour debugging
@@ -1811,6 +1789,10 @@ def setup_config_menu():
         tokens_spin.setValue(max(config.get("max_tokens", 300), 300))
         tokens_layout.addWidget(tokens_spin)
         general_group.addLayout(tokens_layout)
+        feedback_length_help = QLabel(ui.get("feedback_length_help", "Lower = shorter, faster feedback."))
+        feedback_length_help.setStyleSheet("color: #666; font-size: 11px; margin-bottom: 6px;")
+        feedback_length_help.setWordWrap(True)
+        general_group.addWidget(feedback_length_help)
         
         # Temperature
         temp_layout = QHBoxLayout()
@@ -2176,6 +2158,21 @@ def refresh_ai_analysis():
         if hasattr(mw.reviewer, '_showAnswer'):
             mw.reviewer._showAnswer()
 
+
+def regenerate_ai_analysis():
+    context = dict(current_analysis_context)
+    cache_key = context.get("cache_key")
+    expected_provided_tuple = context.get("expected_provided_tuple")
+    type_pattern = context.get("type_pattern")
+    if not cache_key or not expected_provided_tuple:
+        return
+    if is_analyzing.get(cache_key, False):
+        refresh_ai_analysis()
+        return
+    invalidate_analysis_state(cache_key)
+    store_ai_analysis(expected_provided_tuple, type_pattern)
+    refresh_ai_analysis()
+
 # Enregistrer la commande pour le JavaScript
 def register_refresh_command():
     """Enregistre la commande de rafraîchissement pour le JavaScript"""
@@ -2189,6 +2186,9 @@ def handle_js_message(handled, message, context):
     """Gère les messages JavaScript"""
     if message == "refresh_ai_analysis":
         refresh_ai_analysis()
+        return True, None
+    if message == "regenerate_ai_analysis":
+        regenerate_ai_analysis()
         return True, None
     return handled
 

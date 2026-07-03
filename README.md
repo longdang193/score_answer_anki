@@ -11,7 +11,7 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
 - Gives structured feedback:
   - score (0-10) when available
   - improvement tips
-  - review suggestion (`Again`, `Hard`, `Good`, `Easy`)
+  - optional rerun via `Regenerate Analysis`
 - Runs analysis in background to keep review flow responsive
 - Supports multiple LLM providers from one config screen
 - Supports multilingual analysis and UI localization
@@ -37,6 +37,7 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
 - **Error-safe scoring**:
   - provider errors no longer show fake `5/10`
   - displays `N/A` when analysis is unavailable
+  - regenerate button can request a fresh analysis
 
 ## Supported Languages
 
@@ -75,7 +76,7 @@ Analysis feedback and UI labels currently support:
 - **AI Provider**: active provider used for analysis
 - **Analysis language**: language for AI feedback (`tips`) and prompt intent
 - **Enable AI analysis**: global on/off
-- **Max tokens**: max output size
+- **Feedback length**: max AI response length (`lower = shorter, faster feedback`)
 - **Temperature**: response creativity/variance
 - **Show Anki compare**: toggle native Anki comparison block
 - **Show code compare**: toggle side-by-side extracted text comparison
@@ -128,7 +129,7 @@ If selected model test fails, the add-on may successfully validate via `openrout
 
 ## Scoring Behavior
 
-- Normal case: shows score and review suggestion
+- Normal case: shows score and improvement tips
 - Provider/API/parsing failure: shows `N/A` (not a fake numeric score)
 - Keeps failure details in feedback text for easier troubleshooting
 

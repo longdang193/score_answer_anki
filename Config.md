@@ -12,7 +12,7 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 ### What it does:
 - **Intelligent Answer Evaluation**: AI analyzes your answers semantically, not just text matching
 - **Constructive Feedback**: Provides specific tips to improve your understanding
-- **Smart Review Suggestions**: Recommends appropriate review intervals based on answer quality
+- **Regenerate Analysis**: Lets you rerun AI feedback when you want a fresh result
 - **Multi-Language Support**: Works in English, French, Spanish, and German
 - **Multiple AI Providers**: Choose from OpenAI, Google Gemini, Anthropic Claude, DeepSeek, OpenRouter, Groq, or Custom OpenAI-Compatible
 ⚠️ : I tested Google Gemini and OpenRouter using their free evaluation keys.
@@ -52,11 +52,11 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 - **Default**: Enabled
 - **When disabled**: Shows standard Anki comparison only
 
-#### Max Tokens
+#### Feedback Length
 - **Purpose**: Limit the length of AI responses
 - **Range**: 50-4000 tokens
 - **Default**: 200
-- **Impact**: Longer = more detailed feedback, but costs more
+- **Impact**: Lower = shorter, faster feedback; higher = more detailed feedback
 
 #### Temperature (0-1)
 - **Purpose**: Control AI creativity/randomness
@@ -132,7 +132,7 @@ Each AI provider has its own tab with specific configuration:\n
 
 ### 3. Adjust Settings
 1. Choose your preferred language for feedback
-2. Adjust max tokens if needed (200 is usually sufficient)
+2. Adjust feedback length if needed (200 is usually sufficient)
 3. Set temperature (0.7 is a good balance)
 4. Click "Save"
 
@@ -144,7 +144,7 @@ Each AI provider has its own tab with specific configuration:\n
 - The AI provides:
   - A score from 0-10
   - Specific improvement tips
-  - A review suggestion (Again/Hard/Good/Easy)
+  - A `Regenerate Analysis` action if you want a fresh answer
 
 ## AI Scoring System
 
