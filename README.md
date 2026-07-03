@@ -20,7 +20,7 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
 
 ## Key Features
 
-- **Multi-provider support**: OpenAI, Gemini, Claude, DeepSeek, Groq, OpenRouter
+- **Multi-provider support**: OpenAI, Gemini, Claude, DeepSeek, Groq, OpenRouter, Custom OpenAI-Compatible
 - **Analysis language control**: choose output language independently of your answer language
 - **Interface language auto mode**: config UI can follow Anki UI language
 - **Custom prompt system**:
@@ -63,7 +63,7 @@ Analysis feedback and UI labels currently support:
 
 1. Open `Tools -> AI Multi-Provider Configuration`.
 2. Select provider and model.
-3. Add your API key.
+3. Add your API key, or for `Custom OpenAI-Compatible` enter base URL + model and leave API key blank if your local router does not need one.
 4. Click `Test API Connection`.
 5. Select `Analysis language`.
 6. Save and review your `type:` cards as usual.
@@ -103,6 +103,12 @@ Each provider tab includes:
 - editable model field
 - `Add model ID` input/button to append custom model IDs
 
+`Custom OpenAI-Compatible` also includes:
+
+- base URL root field, for example `http://127.0.0.1:20128/v1`
+- validation that rejects full `/chat/completions` endpoint input
+- optional API key support for local routers
+
 Custom model IDs are saved per provider in config and restored on restart.
 
 > Always test a model ID before using it in real reviews.  
@@ -133,7 +139,16 @@ If selected model test fails, the add-on may successfully validate via `openrout
 - Verify API key and provider account status
 - Try another model ID
 - For OpenRouter, start with `openrouter/free`
+- For `Custom OpenAI-Compatible`, enter base URL root only, not `/chat/completions`
 - Reduce traffic / retry later (temporary provider saturation can happen)
+
+### Custom OpenAI-Compatible quick example
+
+- Provider: `Custom OpenAI-Compatible`
+- Base URL: `http://127.0.0.1:20128/v1`
+- Model: your router model ID
+- API key: leave blank if your local router does not require auth
+- Then run `Test API Connection`
 
 ### Always getting English feedback
 

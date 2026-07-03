@@ -718,6 +718,10 @@ DEFAULT_CONFIG = {
     "groq_model": "llama-3.3-70b-versatile",
     "openrouter_api_key": "",
     "openrouter_model": "openrouter/free",
+    "custom_openai_base_url": "",
+    "custom_openai_api_key": "",
+    "custom_openai_model": "",
+    "custom_openai_custom_models": [],
     "enabled": True,
     "max_tokens": 200,
     "temperature": 0.7,
@@ -1108,6 +1112,43 @@ def get_config_ui_texts(config=None):
     code = _detect_ui_lang_code() if sel == "auto" else sel[:2]
     return CONFIG_UI_TEXTS.get(code, CONFIG_UI_TEXTS["en"])
 
+
+CUSTOM_OPENAI_PROVIDER = "custom_openai"
+
+
+def merge_config_with_defaults(config):
+    merged = dict(DEFAULT_CONFIG)
+    if config:
+        merged.update(config)
+    return merged
+
+
+def get_provider_default_model(provider):
+    models = PROVIDERS.get(provider, {}).get("models", [])
+    return models[0] if models else ""
+
+
+def build_openai_compatible_headers(api_key):
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def resolve_custom_openai_request(base_url, api_key):
+    normalized_base_url = (base_url or "").strip()
+    if not normalized_base_url:
+        raise ValueError("Please enter a base URL for the custom provider.")
+
+    trimmed_base_url = normalized_base_url.rstrip("/")
+    if trimmed_base_url.lower().endswith("/chat/completions"):
+        raise ValueError("Please enter the base URL root, not the full /chat/completions endpoint.")
+
+    return {
+        "url": trimmed_base_url + "/chat/completions",
+        "headers": build_openai_compatible_headers((api_key or "").strip()),
+    }
+
 # Configuration des fournisseurs
 PROVIDERS = {
     "openai": {
@@ -1176,20 +1217,26 @@ PROVIDERS = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         }
+    },
+    CUSTOM_OPENAI_PROVIDER: {
+        "name": "Custom OpenAI-Compatible",
+        "url": "",
+        "models": [],
+        "headers_func": lambda api_key: build_openai_compatible_headers(api_key)
     }
 }
 
 def get_config():
     """Récupère la configuration depuis les métadonnées d'Anki"""
     try:
-        config = mw.addonManager.getConfig(__name__)
-        if not config:
-            config = DEFAULT_CONFIG
+        saved_config = mw.addonManager.getConfig(__name__) or {}
+        config = merge_config_with_defaults(saved_config)
+        if config != saved_config:
             save_config(config)
         return config
     except Exception as e:
         print(f"Error loading config: {e}")
-        return DEFAULT_CONFIG
+        return merge_config_with_defaults(None)
 
 def save_config(config):
     """Sauvegarde la configuration dans les métadonnées d'Anki"""
@@ -1239,7 +1286,7 @@ def format_messages_for_provider(messages, provider):
             "temperature": 0.7  # Sera ajouté plus tard
         }
 
-def call_ai_api(messages, provider="openai", model="gpt-4.1-mini", max_tokens=200, temperature=0.7, api_key=""):
+def call_ai_api(messages, provider="openai", model="gpt-4.1-mini", max_tokens=200, temperature=0.7, api_key="", base_url=""):
     """
     Appelle l'API du fournisseur choisi
     """
@@ -1247,11 +1294,15 @@ def call_ai_api(messages, provider="openai", model="gpt-4.1-mini", max_tokens=20
         raise Exception(f"Fournisseur non supporté: {provider}")
     
     provider_config = PROVIDERS[provider]
-    
+
     # Construire l'URL
     if provider == "gemini":
         url = provider_config["url"].format(model=model) + f"?key={api_key}"
         headers = {"Content-Type": "application/json"}
+    elif provider == CUSTOM_OPENAI_PROVIDER:
+        request_config = resolve_custom_openai_request(base_url, api_key)
+        url = request_config["url"]
+        headers = request_config["headers"]
     else:
         url = provider_config["url"]
         headers = provider_config["headers_func"](api_key)
@@ -1611,9 +1662,17 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
     language = config.get("language", "english")
     api_key_field = f"{provider}_api_key"
     model_field = f"{provider}_model"
-    
+
     api_key = config.get(api_key_field, "").strip()
-    if not api_key:
+    base_url = (config.get(f"{provider}_base_url", "") or "").strip()
+    model = (config.get(model_field, get_provider_default_model(provider)) or "").strip()
+
+    if provider == CUSTOM_OPENAI_PROVIDER:
+        if not base_url:
+            return make_analysis_unavailable("Custom OpenAI base URL not configured", language)
+        if not model:
+            return make_analysis_unavailable("Custom OpenAI model not configured", language)
+    elif not api_key:
         return make_analysis_unavailable(f"{PROVIDERS[provider]['name']} API key not configured", language)
     
     prompt = build_analysis_prompt(config, language, question_text, true_answer, user_answer) + get_language_lock_instruction(language)
@@ -1629,10 +1688,11 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
         ai_response = call_ai_api(
             messages=messages,
             provider=provider,
-            model=config.get(model_field, PROVIDERS[provider]["models"][0]),
+            model=model,
             max_tokens=config.get("max_tokens", 200),
             temperature=config.get("temperature", 0.7),
-            api_key=api_key
+            api_key=api_key,
+            base_url=base_url
         )
         
         # Tenter de parser la réponse JSON
@@ -1853,6 +1913,7 @@ def setup_config_menu():
         
         # Stockage des widgets pour récupérer les valeurs
         api_inputs = {}
+        base_url_inputs = {}
         model_combos = {}
         builtin_models_by_provider = {}
         tab_widgets = {}
@@ -1860,10 +1921,20 @@ def setup_config_menu():
         for provider_key, provider_info in PROVIDERS.items():
             tab = QWidget()
             tab_layout = QVBoxLayout()
-            
+
+            if provider_key == CUSTOM_OPENAI_PROVIDER:
+                base_url_layout = QHBoxLayout()
+                base_url_layout.addWidget(QLabel(ui.get("base_url", "Base URL:")))
+                base_url_input = QLineEdit(config.get(f"{provider_key}_base_url", ""))
+                base_url_input.setPlaceholderText(ui.get("base_url_placeholder", "http://127.0.0.1:20128/v1"))
+                base_url_layout.addWidget(base_url_input)
+                tab_layout.addLayout(base_url_layout)
+                base_url_inputs[provider_key] = base_url_input
+
             # Clé API
             api_key_layout = QHBoxLayout()
-            api_key_layout.addWidget(QLabel(f"{provider_info['name']} API Key:"))
+            api_key_label = ui.get("api_key_optional", "API Key (optional):") if provider_key == CUSTOM_OPENAI_PROVIDER else f"{provider_info['name']} API Key:"
+            api_key_layout.addWidget(QLabel(api_key_label))
             api_key_input = QLineEdit(config.get(f"{provider_key}_api_key", ""))
             
             # Compatible avec PyQt5 et PyQt6 pour le mode password
@@ -1895,7 +1966,7 @@ def setup_config_menu():
                     merged_models.append(cm)
             model_combo.addItems(merged_models)
             model_combo.setEditable(True)
-            current_model = config.get(f"{provider_key}_model", provider_info["models"][0])
+            current_model = config.get(f"{provider_key}_model", get_provider_default_model(provider_key))
             if current_model in merged_models:
                 model_combo.setCurrentText(current_model)
             else:
@@ -1937,7 +2008,8 @@ def setup_config_menu():
                 "claude": "Get your API key at: https://console.anthropic.com/",
                 "deepseek": "Get your API key at: https://platform.deepseek.com/api_keys",
                 "groq": "Get your API key at: https://console.groq.com/keys",
-                "openrouter": "Get your API key at: https://openrouter.ai/settings/keys\nTip: use openrouter/free for maximum compatibility."
+                "openrouter": "Get your API key at: https://openrouter.ai/settings/keys\nTip: use openrouter/free for maximum compatibility.",
+                CUSTOM_OPENAI_PROVIDER: "Enter base URL root, for example: http://127.0.0.1:20128/v1\nDo not enter the full /chat/completions endpoint. API key is optional for local routers."
             }
             
             info_label = QLabel(instructions.get(provider_key, ""))
@@ -1973,8 +2045,22 @@ def setup_config_menu():
         def test_api():
             current_provider_data = provider_combo.currentData()
             api_key = api_inputs[current_provider_data].text().strip()
-            
-            if not api_key:
+            selected_model = model_combos[current_provider_data].currentText().strip()
+            base_url = ""
+
+            if current_provider_data == CUSTOM_OPENAI_PROVIDER:
+                base_url = base_url_inputs[current_provider_data].text().strip()
+                if not base_url:
+                    showWarning(ui.get("enter_base_url", "Please enter a base URL to test the connection."))
+                    return
+                if base_url.rstrip("/").lower().endswith("/chat/completions"):
+                    showWarning(ui.get("enter_base_url_root", "Please enter the base URL root, not the full /chat/completions endpoint."))
+                    return
+                if not selected_model:
+                    showWarning(ui.get("enter_model", "Please enter a model ID to test the connection."))
+                    return
+
+            if current_provider_data != CUSTOM_OPENAI_PROVIDER and not api_key:
                 showWarning(ui["enter_api_key"])
                 return
             
@@ -1985,14 +2071,14 @@ def setup_config_menu():
             
             try:
                 messages = [{"role": "user", "content": "Respond simply 'OK' to test the connection."}]
-                selected_model = model_combos[current_provider_data].currentText()
                 response = call_ai_api(
                     messages=messages,
                     provider=current_provider_data,
                     model=selected_model,
                     max_tokens=10,
                     temperature=0.1,
-                    api_key=api_key
+                    api_key=api_key,
+                    base_url=base_url
                 )
                 showInfo("✅ " + ui["connection_success"].format(provider=PROVIDERS[current_provider_data]["name"], response=response[:50] + "..."))
             except Exception as e:
@@ -2051,6 +2137,8 @@ def setup_config_menu():
             
             # Sauvegarder toutes les clés API et modèles
             for provider_key in PROVIDERS.keys():
+                if provider_key in base_url_inputs:
+                    new_config[f"{provider_key}_base_url"] = base_url_inputs[provider_key].text().strip()
                 new_config[f"{provider_key}_api_key"] = api_inputs[provider_key].text()
                 new_config[f"{provider_key}_model"] = model_combos[provider_key].currentText()
                 custom_list = []

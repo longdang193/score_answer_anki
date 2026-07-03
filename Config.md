@@ -14,7 +14,7 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 - **Constructive Feedback**: Provides specific tips to improve your understanding
 - **Smart Review Suggestions**: Recommends appropriate review intervals based on answer quality
 - **Multi-Language Support**: Works in English, French, Spanish, and German
-- **Multiple AI Providers**: Choose from OpenAI, Google Gemini, Anthropic Claude, DeepSeek, openrouter or Groq
+- **Multiple AI Providers**: Choose from OpenAI, Google Gemini, Anthropic Claude, DeepSeek, OpenRouter, Groq, or Custom OpenAI-Compatible
 ⚠️ : I tested Google Gemini and OpenRouter using their free evaluation keys.
 
 ### Why use it:
@@ -33,7 +33,7 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 ![config0](/images/config_0.png)
 ![config0](/images/config.png)
 - **Purpose**: Choose which AI service to use for analysis
-- **Options**: OpenAI, Google Gemini, Anthropic Claude, DeepSeek, Groq
+- **Options**: OpenAI, Google Gemini, Anthropic Claude, DeepSeek, Groq, OpenRouter, Custom OpenAI-Compatible
 - **Default**: OpenAI
 - **Note**: Only the selected provider's tab will be enabled in the configuration
 ⚠️ : For basic use, I recommend using a Gemini key, since the free key allows you to run 2 or 3 complete review sessions
@@ -106,6 +106,14 @@ Each AI provider has its own tab with specific configuration:\n
 - **Cost**: Free tier available with rate limits
 - ⚠️ : **Recommended Model**: tencent/hunyuan-a13b-instruct:free
 
+#### Custom OpenAI-Compatible
+- **Use case**: Local or self-hosted OpenAI-compatible routers such as 9router
+- **Base URL**: Enter base URL root only, for example `http://127.0.0.1:20128/v1`
+- **Do not enter**: `http://127.0.0.1:20128/v1/chat/completions`
+- **Model**: Enter your local router model ID
+- **API Key**: Optional; leave blank if your router does not require auth
+- **Connection test**: Requires base URL + model, not API key
+
 
 ## Setup Instructions
 
@@ -118,7 +126,7 @@ Each AI provider has its own tab with specific configuration:\n
 ### 2. Configure API Access
 1. Click on the tab for your selected provider
 2. Get an API key from the provider's website (links provided in each tab)
-3. Enter your API key in the field
+3. Enter your API key in the field, or for `Custom OpenAI-Compatible` enter base URL root and optional API key
 4. Select your preferred model
 5. Click "Test API Connection" to verify everything works
 
@@ -182,11 +190,13 @@ The AI evaluates your answers on a 0-10 scale:
 #### "API key not configured"
 - Ensure you've entered the API key for your selected provider
 - Test the connection using the test button
+- `Custom OpenAI-Compatible` can leave API key blank if router does not require auth
 
 #### "Connection error"
 - Check your internet connection
 - Verify your API key is correct and has sufficient credits
 - Try switching to a different provider
+- For `Custom OpenAI-Compatible`, make sure you entered base URL root instead of `/chat/completions`
 
 #### "AI analysis not available"
 - Check if AI analysis is enabled in settings
@@ -208,6 +218,7 @@ The AI evaluates your answers on a 0-10 scale:
 - No data is stored permanently by the add-on (only temporary cache)
 - Each provider has their own data retention policies
 - Consider using local or privacy-focused providers if data privacy is a concern
+- `Custom OpenAI-Compatible` supports local OpenAI-compatible routers for this use case
 
 ## Support
 
