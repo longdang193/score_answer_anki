@@ -7,12 +7,14 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 
 ⚠️ : This add-on works with Anki's type-answer question-answer.
 
+⚠️ : AI scoring UI runs only when card template name ends with `_score`.
+
 ## Purpose
 
 ### What it does:
 - **Intelligent Answer Evaluation**: AI analyzes your answers semantically, not just text matching
 - **Constructive Feedback**: Provides specific tips to improve your understanding
-- **Regenerate Analysis**: Lets you rerun AI feedback when you want a fresh result
+- **Refresh analysis action**: Lets you rerun AI feedback when you want a fresh result
 - **Multi-Language Support**: Works in English, French, Spanish, and German
 - **Multiple AI Providers**: Choose from OpenAI, Google Gemini, Anthropic Claude, DeepSeek, OpenRouter, Groq, or Custom OpenAI-Compatible
 ⚠️ : I tested Google Gemini and OpenRouter using their free evaluation keys.
@@ -144,7 +146,7 @@ Each AI provider has its own tab with specific configuration:\n
 - The AI provides:
   - A score from 0-10
   - Specific improvement tips
-  - A `Regenerate Analysis` action if you want a fresh answer
+  - A compact refresh action if you want a fresh answer
 
 ## AI Scoring System
 
@@ -211,6 +213,31 @@ The AI evaluates your answers on a 0-10 scale:
 - The add-on caches recent analyses to avoid duplicate API calls
 - Analysis happens asynchronously to avoid blocking your reviews
 - Cache automatically clears after 10 entries to manage memory
+
+### Question and Answer Variants
+
+Use four fields for typed-answer variant cards:
+
+- `Front`: canonical display question
+- `Front_variants`: optional alternate question phrasings separated by `;;`
+- `Back`: canonical display answer
+- `Back_variants`: optional accepted-answer variants separated by `;;`
+
+Example:
+
+- `Front`: `13 * 17 = ?`
+- `Front_variants`: `17 * 13 = ?`
+- `Back`: `221`
+- `Back_variants`: `two hundred twenty-one;;221.0`
+
+Rules in V1:
+
+- one eligible question is picked from `Front` + `Front_variants`
+- chosen question stays stable for answer reveal and regenerate-analysis
+- add-on filters obviously incompatible question variants before display
+- `Back_variants` extends add-on AI acceptance only
+- native Anki typed compare still uses normal Anki behavior
+- no positional mapping exists between `Front_variants` and `Back_variants`
 
 ## Privacy and Data
 

@@ -11,12 +11,13 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
 - Gives structured feedback:
   - score (0-10) when available
   - improvement tips
-  - optional rerun via `Regenerate Analysis`
+  - optional rerun via compact refresh action
 - Runs analysis in background to keep review flow responsive
 - Supports multiple LLM providers from one config screen
 - Supports multilingual analysis and UI localization
 
 > This add-on is designed for Anki cards using typed answers (`{{type:...}}`).
+> AI scoring UI runs only when card template name ends with `_score`.
 
 ## Key Features
 
@@ -37,7 +38,7 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
 - **Error-safe scoring**:
   - provider errors no longer show fake `5/10`
   - displays `N/A` when analysis is unavailable
-  - regenerate button can request a fresh analysis
+  - compact refresh action can request a fresh analysis
 
 ## Supported Languages
 
@@ -68,6 +69,37 @@ Analysis feedback and UI labels currently support:
 4. Click `Test API Connection`.
 5. Select `Analysis language`.
 6. Save and review your `type:` cards as usual.
+
+## Question and Answer Variants
+
+Use dedicated fields.
+
+- `Front`: canonical display question
+- `Front_variants`: optional alternate question phrasings separated by `;;`
+- `Back`: canonical display answer
+- `Back_variants`: optional accepted-answer variants separated by `;;`
+
+Example:
+
+- `Front`: `13 * 17 = ?`
+- `Front_variants`: `17 * 13 = ?;;221 = 13 * ?`
+- `Back`: `221`
+- `Back_variants`: `two hundred twenty-one;;221.0`
+
+Behavior:
+
+- add-on builds one question pool from `Front` + `Front_variants`
+- add-on builds one accepted-answer pool from `Back` + `Back_variants`
+- one eligible question is shown per card exposure and stays stable for answer side and AI regenerate
+- obviously incompatible question variants are filtered before display
+- native Anki typed-answer compare and scheduling stay unchanged; accepted-answer variants affect add-on AI advice only
+
+V1 limits:
+
+- `Front_variants` and `Back_variants` use literal `;;`
+- one card should still represent one concept
+- no positional mapping exists between question variants and answer variants
+- plain-text question rendering works best; rich HTML/media variants are not variant-aware in V1
 
 ## Configuration Guide
 

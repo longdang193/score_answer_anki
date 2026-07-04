@@ -1,4 +1,6 @@
+import ast
 import html
+import random
 import re
 from aqt import gui_hooks
 
@@ -7,6 +9,22 @@ ai_analysis_cache = {}
 is_analyzing = {}
 analysis_results = {}
 current_analysis_context = {}
+active_question_state = {}
+
+QUESTION_VARIANT_SEPARATOR = ";;"
+QUESTION_FIELD = "Front"
+QUESTION_VARIANTS_FIELD = "Front_variants"
+ANSWER_FIELD = "Back"
+ANSWER_VARIANTS_FIELD = "Back_variants"
+QUESTION_VARIANT_MEDIA_MARKERS = (
+    "[sound:",
+    "<img",
+    "<audio",
+    "<video",
+    "<object",
+    "<embed",
+    "<svg",
+)
 
 # translations and label helpers
 # Map your config["language"] key -> labels
@@ -140,6 +158,8 @@ import re, html
 from aqt import gui_hooks
 
 def _to_textarea_on_question(text: str, card, kind: str) -> str:
+    text = apply_question_variant_to_rendered_question(text, card, kind)
+
     if not kind or "Question" not in kind:
         return text
 
@@ -239,30 +259,192 @@ def inject_multiline_type_input(web_content, context):
 
     web_content.head += """
 <style>
+@import url("_card-base-shared.css");
+
 /* Couleurs thème-aware pour les blocs de comparaison */
 :root {
+  --aqi-font-body: var(--shared-font-body, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  --aqi-font-heading: var(--shared-font-heading, 'Segoe UI', sans-serif);
+  --aqi-surface-bg: #f8f9fa;
+  --aqi-surface-border: #6c757d;
+  --aqi-copy-strong: #2c3e50;
+  --aqi-copy-body: #34495e;
+  --aqi-panel-body-bg: rgba(255,255,255,0.7);
   --ak-code-bg: #fafafa;
   --ak-code-fg: #1b1b1b;
   --ak-code-border: #ddd;
   --ak-code-label: #222;
+  --sqv-question-fg: #1f2937;
+  --sqv-question-muted: #4b5563;
+  --sqv-question-shadow: none;
+  --sqv-chip-bg: rgba(15, 23, 42, 0.08);
+  --sqv-chip-border: rgba(15, 23, 42, 0.12);
+  --sqv-input-bg: #ffffff;
+  --sqv-input-fg: #111827;
+  --sqv-input-border: #cbd5e1;
 }
 
 /* Détection du sombre dans Anki + fallback */
 body.nightMode, body.night-mode, .nightMode, .night-mode, .isDark, [data-theme="dark"] {
+  --aqi-surface-bg: rgba(255,255,255,0.06);
+  --aqi-surface-border: #64748b;
+  --aqi-copy-strong: var(--shared-night-text, #f5f5f5);
+  --aqi-copy-body: var(--shared-night-muted, #d1d5db);
+  --aqi-panel-body-bg: rgba(15,23,42,0.36);
   --ak-code-bg: #0f1116;
   --ak-code-fg: #e6edf3;
   --ak-code-border: #2d333b;
   --ak-code-label: #e6edf3;
+  --sqv-question-fg: #f3f4f6;
+  --sqv-question-muted: #d1d5db;
+  --sqv-question-shadow: 0 1px 2px rgba(0,0,0,0.35);
+  --sqv-chip-bg: rgba(255, 255, 255, 0.14);
+  --sqv-chip-border: rgba(255, 255, 255, 0.16);
+  --sqv-input-bg: #111827;
+  --sqv-input-fg: #f9fafb;
+  --sqv-input-border: #374151;
 }
 
 /* Fallback pour systèmes qui annoncent le thème via le média */
 @media (prefers-color-scheme: dark) {
   :root {
+    --aqi-surface-bg: rgba(255,255,255,0.06);
+    --aqi-surface-border: #64748b;
+    --aqi-copy-strong: var(--shared-night-text, #f5f5f5);
+    --aqi-copy-body: var(--shared-night-muted, #d1d5db);
+    --aqi-panel-body-bg: rgba(15,23,42,0.36);
     --ak-code-bg: #0f1116;
     --ak-code-fg: #e6edf3;
     --ak-code-border: #2d333b;
     --ak-code-label: #e6edf3;
+    --sqv-question-fg: #f3f4f6;
+    --sqv-question-muted: #d1d5db;
+    --sqv-question-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    --sqv-chip-bg: rgba(255, 255, 255, 0.14);
+    --sqv-chip-border: rgba(255, 255, 255, 0.16);
+    --sqv-input-bg: #111827;
+    --sqv-input-fg: #f9fafb;
+    --sqv-input-border: #374151;
   }
+}
+
+.aqi-shell {
+  font-family: var(--aqi-font-body) !important;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.aqi-anki-compare {
+  background: var(--aqi-surface-bg);
+  padding: 15px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  border-left: 4px solid var(--aqi-surface-border);
+}
+
+.aqi-loading-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 16px;
+  padding: 25px;
+  margin: 20px 0;
+  text-align: center;
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+.aqi-loading-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.aqi-loading-spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: aki_spin 0.9s linear infinite;
+}
+
+.aqi-loading-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.aqi-loading-copy {
+  color: rgba(255,255,255,0.9);
+  margin: 0;
+  font-size: 14px;
+}
+
+.aqi-loading-note {
+  color: rgba(255,255,255,0.7);
+  margin-top: 10px;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.sqv-active-question {
+  font-family: var(--aqi-font-body) !important;
+  color: var(--sqv-question-fg) !important;
+  text-shadow: var(--sqv-question-shadow);
+}
+
+.sqv-question-block {
+  margin: 0 auto 18px auto;
+  max-width: 780px;
+  text-align: center;
+}
+
+.sqv-choice-list,
+.sqv-active-question {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.sqv-active-question {
+  font-size: clamp(28px, 5vw, 36px);
+  font-weight: 800;
+  line-height: 1.25;
+  margin-bottom: 10px;
+}
+
+.sqv-choice-list {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--sqv-question-muted) !important;
+}
+
+.sqv-choice-chip {
+  display: inline-block;
+  margin: 4px 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--sqv-chip-bg) !important;
+  border: 1px solid var(--sqv-chip-border) !important;
+  color: inherit;
+}
+
+input#typeans,
+textarea#typeans,
+.sqv-type-input {
+  background: var(--sqv-input-bg) !important;
+  color: var(--sqv-input-fg) !important;
+  border: 1px solid var(--sqv-input-border) !important;
+  border-radius: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+input#typeans:focus,
+textarea#typeans:focus,
+.sqv-type-input:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.45);
+  outline-offset: 1px;
 }
 
 /* Styles des blocs de comparaison */
@@ -280,6 +462,80 @@ body.nightMode, body.night-mode, .nightMode, .night-mode, .isDark, [data-theme="
   color: var(--ak-code-fg) !important;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
+}
+
+.aqi-panel-card {
+  border-radius: 16px;
+  padding: 16px;
+  margin: 16px 0;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+  background: var(--aqi-score-bg);
+  border: 2px solid var(--aqi-score-color);
+}
+
+.aqi-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.aqi-panel-title-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.aqi-panel-title {
+  color: var(--aqi-score-color);
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  font-family: var(--aqi-font-body) !important;
+}
+
+.aqi-regenerate-btn {
+  background: rgba(255,255,255,0.78);
+  color: var(--aqi-score-color);
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.08);
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 1;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.10);
+  cursor: pointer;
+}
+
+.aqi-score-badge {
+  background: var(--aqi-score-color);
+  color: white;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 16px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.18);
+}
+
+.aqi-panel-body {
+  padding: 14px 16px;
+  background: var(--aqi-panel-body-bg);
+  border-radius: 12px;
+  border-left: 4px solid var(--aqi-score-color);
+}
+
+.aqi-section-copy {
+  color: var(--aqi-copy-body);
+  margin: 0;
+  line-height: 1.45;
+  font-size: clamp(14px, 4vw, 16px);
+  text-wrap: pretty;
 }
 </style>
 <script>
@@ -356,6 +612,27 @@ def make_analysis_unavailable(reason: str, language: str = "english") -> dict:
         "tips": tips,
     }
 
+def make_variant_mismatch_result(reason: str, language: str = "english") -> dict:
+    texts = get_ui_texts(language)
+    base = texts.get("ai_not_available", "AI analysis not available")
+    details = (reason or "Question variant does not match canonical answer.").strip()
+    return {
+        "scored": False,
+        "score": None,
+        "tips": f"{base}: {details}",
+        "status": "variant_mismatch",
+    }
+
+def build_analysis_prompt_payload(card, user_answer: str) -> dict:
+    canonical_answer, accepted_answers = build_accepted_answer_pool(card)
+    question_text = get_active_question_variant(card) or (get_note_field(card, QUESTION_FIELD) or "").strip()
+    return {
+        "question_text": question_text,
+        "canonical_answer": canonical_answer,
+        "accepted_answers": accepted_answers,
+        "user_answer": user_answer or "",
+    }
+
 
 def build_analysis_cache_key(question_text: str, true_answer: str, user_answer: str) -> str:
     return f"{hash(question_text or '')}_{hash(true_answer or '')}_{hash(user_answer or '')}"
@@ -371,14 +648,15 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
     Lance l'analyse IA en arrière-plan pour ne pas bloquer l'UI,
     afin que le verso s'affiche tout de suite avec un spinner.
     """
-    true_answer = expected_provided_tuple[0] or ""
     user_answer = expected_provided_tuple[1] or ""
-
-    question_text = get_current_question()
-    cache_key = build_analysis_cache_key(question_text, true_answer, user_answer)
+    card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
+    if not should_score_card(card):
+        return expected_provided_tuple
+    payload = build_analysis_prompt_payload(card, user_answer)
+    cache_key = build_analysis_cache_key(payload["question_text"], payload["canonical_answer"], user_answer)
     current_analysis_context.update(
         {
-            "expected_provided_tuple": (true_answer, user_answer),
+            "expected_provided_tuple": (payload["canonical_answer"], user_answer),
             "type_pattern": type_pattern,
             "cache_key": cache_key,
         }
@@ -403,7 +681,16 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
     def task():
         try:
             print("Calling AI API for analysis (background)...")
-            return analyze_answer_with_ai(question_text, true_answer, user_answer)
+            mismatch_reason = get_question_variant_mismatch_reason(card)
+            if mismatch_reason:
+                cfg = get_config()
+                return make_variant_mismatch_result(mismatch_reason, cfg.get("language", "english"))
+            return analyze_answer_with_ai(
+                payload["question_text"],
+                payload["canonical_answer"],
+                payload["accepted_answers"],
+                payload["user_answer"],
+            )
         except Exception as e:
             print(f"AI Analysis Error (bg): {e}")
             cfg = get_config()
@@ -466,6 +753,292 @@ def clean_html_content(html_content):
     
     return text
 
+def get_note_field(card, field_name: str) -> str:
+    if not card:
+        return ""
+    try:
+        note_attr = getattr(card, "note", None)
+        note = note_attr() if callable(note_attr) else note_attr
+        if note is None:
+            return ""
+        try:
+            value = note[field_name]
+        except Exception:
+            value = getattr(note, field_name, "")
+        return value if isinstance(value, str) else str(value or "")
+    except Exception as e:
+        print(f"Error getting note field {field_name}: {e}")
+        return ""
+
+
+def get_card_template_name(card) -> str:
+    if not card:
+        return ""
+    try:
+        note_attr = getattr(card, "note", None)
+        note = note_attr() if callable(note_attr) else note_attr
+        if note is None:
+            return ""
+        model_attr = getattr(note, "model", None)
+        model = model_attr() if callable(model_attr) else model_attr
+        if not isinstance(model, dict):
+            return ""
+        template_ord = getattr(card, "ord", 0)
+        templates = model.get("tmpls") or []
+        if not isinstance(template_ord, int) or template_ord < 0 or template_ord >= len(templates):
+            return ""
+        template = templates[template_ord] or {}
+        name = template.get("name", "") if isinstance(template, dict) else ""
+        return name if isinstance(name, str) else str(name or "")
+    except Exception as e:
+        print(f"Error getting card template name: {e}")
+        return ""
+
+
+def should_score_card(card) -> bool:
+    template_name = get_card_template_name(card).strip().lower()
+    return template_name.endswith("_score")
+
+def get_raw_front_field(card) -> str:
+    return get_note_field(card, QUESTION_FIELD)
+
+def parse_variant_field(raw_value: str) -> list[str]:
+    if not raw_value:
+        return []
+    return [segment.strip() for segment in raw_value.split(QUESTION_VARIANT_SEPARATOR) if segment.strip()]
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    unique_values = []
+    seen = set()
+    for value in values:
+        normalized = (value or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_values.append(normalized)
+    return unique_values
+
+def build_visible_question_pool(card) -> list[str]:
+    return _ordered_unique([
+        get_note_field(card, QUESTION_FIELD),
+        *parse_variant_field(get_note_field(card, QUESTION_VARIANTS_FIELD)),
+    ])
+
+def build_accepted_answer_pool(card) -> tuple[str, list[str]]:
+    canonical_answer = (get_note_field(card, ANSWER_FIELD) or "").strip()
+    accepted_answers = _ordered_unique([
+        canonical_answer,
+        *parse_variant_field(get_note_field(card, ANSWER_VARIANTS_FIELD)),
+    ])
+    return canonical_answer, accepted_answers
+
+def _is_plain_text_variant(value: str) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    if re.search(r'<[^>]+>', value):
+        return False
+    lowered = value.lower()
+    return not any(marker in lowered for marker in QUESTION_VARIANT_MEDIA_MARKERS)
+
+def _parse_numeric_text(value: str) -> float | None:
+    text = (value or "").strip()
+    if not re.fullmatch(r"[-+]?\d+(?:\.\d+)?", text):
+        return None
+    try:
+        return float(text)
+    except Exception:
+        return None
+
+def _safe_eval_arithmetic(expression: str) -> float:
+    tree = ast.parse(expression, mode="eval")
+
+    def evaluate(node):
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            operand = evaluate(node.operand)
+            return operand if isinstance(node.op, ast.UAdd) else -operand
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)):
+            left = evaluate(node.left)
+            right = evaluate(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            return left ** right
+        raise ValueError("Unsupported arithmetic expression")
+
+    return float(evaluate(tree))
+
+def _evaluate_equation_with_answer(question_variant: str, answer_value: float | None) -> str:
+    if answer_value is None:
+        return "unsupported"
+    if not isinstance(question_variant, str) or question_variant.count("?") != 1 or question_variant.count("=") != 1:
+        return "unsupported"
+    left_raw, right_raw = [segment.strip() for segment in question_variant.split("=", 1)]
+    if "?" not in left_raw and "?" not in right_raw:
+        return "unsupported"
+    substituted = str(int(answer_value)) if float(answer_value).is_integer() else str(answer_value)
+    left_expr = left_raw.replace("?", substituted)
+    right_expr = right_raw.replace("?", substituted)
+    try:
+        left_value = _safe_eval_arithmetic(left_expr)
+        right_value = _safe_eval_arithmetic(right_expr)
+    except Exception:
+        return "unsupported"
+    return "compatible" if abs(left_value - right_value) < 1e-9 else "incompatible"
+
+def evaluate_question_variant_compatibility(question_variant: str, canonical_answer: str, answer_pool: list[str]) -> str:
+    canonical_status = _evaluate_equation_with_answer(question_variant, _parse_numeric_text(canonical_answer))
+    if canonical_status != "unsupported":
+        return canonical_status
+    for answer in answer_pool or []:
+        fallback_status = _evaluate_equation_with_answer(question_variant, _parse_numeric_text(answer))
+        if fallback_status == "compatible":
+            return "compatible"
+    return canonical_status
+
+def get_eligible_question_variants(card) -> list[str]:
+    canonical_answer, accepted_answers = build_accepted_answer_pool(card)
+    eligible_variants = []
+    for question_variant in build_visible_question_pool(card):
+        compatibility = evaluate_question_variant_compatibility(question_variant, canonical_answer, accepted_answers)
+        if compatibility != "incompatible":
+            eligible_variants.append(question_variant)
+    return eligible_variants
+
+def get_question_variant_mismatch_reason(card) -> str | None:
+    question_pool = build_visible_question_pool(card)
+    if not question_pool:
+        return None
+    canonical_answer, accepted_answers = build_accepted_answer_pool(card)
+    canonical_question = question_pool[0]
+    compatibility = evaluate_question_variant_compatibility(canonical_question, canonical_answer, accepted_answers)
+    if compatibility == "incompatible":
+        return f'Canonical Front question is incompatible with canonical Back answer: "{canonical_question}" vs "{canonical_answer}"'
+    return None
+
+def choose_question_variant(candidates: list[str], rng=None) -> str:
+    if not candidates:
+        return ""
+    if rng is None:
+        return random.choice(candidates)
+    if hasattr(rng, "choice") and callable(rng.choice):
+        return rng.choice(candidates)
+    return rng(candidates)
+
+def reset_active_question_state() -> None:
+    active_question_state.clear()
+
+def _build_active_question_signature(card) -> tuple[object, int, int]:
+    card_id = getattr(card, "id", None)
+    question_pool_hash = hash(tuple(build_visible_question_pool(card)))
+    _canonical_answer, accepted_answers = build_accepted_answer_pool(card)
+    answer_pool_hash = hash(tuple(accepted_answers))
+    return card_id, question_pool_hash, answer_pool_hash
+
+def get_active_question_variant(card) -> str | None:
+    if not card:
+        return None
+    card_id, question_pool_hash, answer_pool_hash = _build_active_question_signature(card)
+    chosen_variant = active_question_state.get("chosen_variant")
+    if (
+        active_question_state.get("card_id") == card_id
+        and active_question_state.get("question_pool_hash") == question_pool_hash
+        and active_question_state.get("answer_pool_hash") == answer_pool_hash
+        and chosen_variant in get_eligible_question_variants(card)
+    ):
+        return chosen_variant
+    return None
+
+def get_or_choose_active_question_variant(card, rng=None) -> str | None:
+    eligible_variants = get_eligible_question_variants(card)
+    if len(eligible_variants) <= 1:
+        return eligible_variants[0] if eligible_variants else None
+
+    existing_variant = get_active_question_variant(card)
+    if existing_variant:
+        return existing_variant
+
+    raw_front = get_raw_front_field(card)
+    if not _is_plain_text_variant(raw_front):
+        return None
+    if any(not _is_plain_text_variant(variant) for variant in eligible_variants):
+        return None
+
+    card_id, question_pool_hash, answer_pool_hash = _build_active_question_signature(card)
+    chosen_variant = choose_question_variant(eligible_variants, rng=rng)
+    active_question_state.update(
+        {
+            "card_id": card_id,
+            "question_pool_hash": question_pool_hash,
+            "answer_pool_hash": answer_pool_hash,
+            "chosen_variant": chosen_variant,
+        }
+    )
+    return chosen_variant
+
+def get_active_visible_question(card) -> str:
+    chosen_variant = get_active_question_variant(card)
+    if chosen_variant:
+        return chosen_variant
+    canonical_question = get_note_field(card, QUESTION_FIELD)
+    if canonical_question:
+        return canonical_question.strip()
+    return clean_html_content(card.question()) if card else ""
+
+def build_question_variant_markup(card) -> str:
+    raw_front = get_raw_front_field(card)
+    candidates = get_eligible_question_variants(card)
+    chosen_variant = get_or_choose_active_question_variant(card)
+    if not chosen_variant or len(candidates) <= 1:
+        return ""
+
+    other_variants = [variant for variant in candidates if variant != chosen_variant]
+    choice_html = "".join(
+        f'<span class="sqv-choice-chip">{html.escape(variant)}</span>'
+        for variant in other_variants
+    )
+    if not choice_html:
+        choice_html = f'<span class="sqv-choice-chip">{html.escape(chosen_variant)}</span>'
+
+    return f"""
+    <div class="sqv-question-block">
+        <div class="sqv-active-question">
+            {html.escape(chosen_variant)}
+        </div>
+        <div class="sqv-choice-list">
+            {choice_html}
+        </div>
+    </div>
+    """
+
+def apply_question_variant_to_rendered_question(text: str, card, kind: str) -> str:
+    if not kind or ("Question" not in kind and "Answer" not in kind):
+        return text
+
+    chosen_variant = get_or_choose_active_question_variant(card)
+    if not chosen_variant:
+        return text
+
+    raw_front = get_raw_front_field(card)
+    variant_markup = build_question_variant_markup(card)
+    if not variant_markup:
+        return text
+    if raw_front and raw_front in text:
+        return text.replace(raw_front, variant_markup, 1)
+    return text
+
 def get_current_question():
     """
     **NOUVELLE FONCTION: Récupère le contenu de la question de la carte actuelle**
@@ -473,13 +1046,8 @@ def get_current_question():
     try:
         if hasattr(mw, 'reviewer') and mw.reviewer and hasattr(mw.reviewer, 'card') and mw.reviewer.card:
             card = mw.reviewer.card
-            
-            # Récupérer le contenu de la question (front de la carte)
-            question_html = card.question()
-            
-            # Nettoyer le HTML pour extraire le texte
-            question_text = clean_html_content(question_html)
-            
+            question_text = get_active_visible_question(card)
+
             print(f"Current question extracted: {question_text[:100]}...")
             return question_text
         else:
@@ -505,6 +1073,9 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     # Skip if AI is disabled
     if not config.get("enabled", True):
         return output
+    card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
+    if not should_score_card(card):
+        return output
     
     # **MODIFIÉ: Inclure la question dans la clé de cache**
     question_text = get_current_question()
@@ -524,23 +1095,23 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
         # Message de chargement simple sans JavaScript compliqué
         # Dans render_enhanced_comparison, remplacer le spinner_output par :
         spinner_output = f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto;">
+        <div class="aqi-shell">
 
             <!-- Comparaison par défaut d'Anki -->
-            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #6c757d;">
+            <div class="aqi-anki-compare">
                 {output}
             </div>
 
             <!-- Bloc chargement -->
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; border-radius: 16px; padding: 25px; margin: 20px 0; text-align: center; color: white; position: relative; overflow: hidden;">
-                <div style="display: inline-flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-                    <div style="width: 26px; height: 26px; border: 3px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: aki_spin 0.9s linear infinite;"></div>
-                    <div style="font-size: 18px; font-weight: 600;">{texts['analyzing']}</div>
+            <div class="aqi-loading-card">
+                <div class="aqi-loading-head">
+                    <div class="aqi-loading-spinner"></div>
+                    <div class="aqi-loading-title">{texts['analyzing']}</div>
                 </div>
-                <p style="color: rgba(255,255,255,0.9); margin: 0; font-size: 14px;">
+                <p class="aqi-loading-copy">
                     {texts['please_wait']}
                 </p>
-                <p style="color: rgba(255,255,255,0.7); margin-top: 10px; font-size: 12px; font-style: italic;">
+                <p class="aqi-loading-note">
                     Actualisation automatique...
                 </p>
             </div>
@@ -578,36 +1149,29 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     if not is_scored:
         score_color = "#6c757d"
         score_bg = "#f3f4f6"
-        score_icon = "ℹ️"
     elif score <= 3:
         score_color = "#f44336"  # Rouge
         score_bg = "#ffebee"
-        score_icon = "❌"
     elif score <= 5:
         score_color = "#ff9800"  # Orange
         score_bg = "#fff3e0"
-        score_icon = "⚠️"
     elif score <= 8:
         score_color = "#4caf50"  # Vert
         score_bg = "#e8f5e8"
-        score_icon = "✅"
     else:
         score_color = "#2196f3"  # Bleu
         score_bg = "#e3f2fd"
-        score_icon = "🌟"
-    
-    score_badge = f"{score_icon} {score}/10" if is_scored else f"{score_icon} N/A"
-    regenerate_section = f"""
-            <div style="background: linear-gradient(135deg, rgba(255,255,255,0.82), rgba(255,255,255,0.92)); border: 2px solid {score_color}; border-radius: 12px; padding: 16px; text-align: right;">
-                <button onclick="if (typeof pycmd === 'function') pycmd('regenerate_ai_analysis'); return false;" style="background: linear-gradient(135deg, {score_color}, {score_color}dd); color: white; padding: 10px 18px; border-radius: 20px; border: none; font-weight: bold; font-size: 15px; box-shadow: 0 3px 10px rgba(0,0,0,0.2); cursor: pointer;">
-                    🔄 Regenerate Analysis
+
+    score_badge = f"{score}/10" if is_scored else "N/A"
+    regenerate_button = f"""
+                <button class="aqi-regenerate-btn" title="Regenerate" aria-label="Regenerate" onclick="if (typeof pycmd === 'function') pycmd('regenerate_ai_analysis'); return false;">
+                    ⟳
                 </button>
-            </div>
-        """
+    """
     
     # Affichage alternatif fidèle pour le code (en plus du diff Anki)
     anki_section = f"""
-    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #6c757d;">
+    <div class="aqi-anki-compare">
     {output}
     </div>
     """ if show_anki else ""
@@ -616,37 +1180,29 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
         
     # Affichage simplifié des résultats
     enhanced_output = f"""
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto;">
+    <div class="aqi-shell">
         {anki_section}
         {code_block}
         
-        <!-- Analyse IA avec animation d'apparition -->
-        <div style="background: {score_bg}; border: 2px solid {score_color}; border-radius: 16px; padding: 25px; margin: 20px 0; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
+        <div class="aqi-panel-card" style="--aqi-score-bg: {score_bg}; --aqi-score-color: {score_color};">
             
-            <div style="display: flex; align-items: center; margin-bottom: 20px;">
-                <div style="display: flex; align-items: center; flex: 1;">
-                    <div style="background: {score_color}; width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-                        <span style="font-size: 20px;">🤖</span>
-                    </div>
-                    <h3 style="color: {score_color}; margin: 0; font-size: 22px; font-weight: 700;">
+            <div class="aqi-panel-head">
+                <div class="aqi-panel-title-wrap">
+                    <h3 class="aqi-panel-title">
                         {texts.get('ai_analysis', 'AI Analysis')}
                     </h3>
                 </div>
-                <div style="background: linear-gradient(135deg, {score_color}, {score_color}dd); color: white; padding: 12px 20px; border-radius: 25px; font-weight: bold; font-size: 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                {regenerate_button}
+                <div class="aqi-score-badge">
                     {score_badge}
                 </div>
             </div>
             
-            <div style="margin-bottom: 20px; padding: 15px; background: rgba(255,255,255,0.7); border-radius: 12px; border-left: 4px solid {score_color};">
-                <h4 style="color: #2c3e50; margin: 0 0 10px 0; font-size: clamp(15px, 4vw, 17px); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center;">
-                    💡 {texts.get('improvement_tips', 'Improvement Tips')}
-                </h4>
-                <p style="color: #34495e; margin: 0; line-height: 1.6; font-size: clamp(14px, 4vw, 16px);">
+            <div class="aqi-panel-body">
+                <p class="aqi-section-copy">
                     {ai_analysis.get('tips', texts.get('no_tips_available', 'No tips available'))}
                 </p>
             </div>
-            
-            {regenerate_section}
         </div>
     </div>
     """
@@ -881,6 +1437,7 @@ DEFAULT_CUSTOM_ANALYSIS_PROMPT_TEMPLATE = """Analyze the student's answer and re
 
 Question: "{question}"
 Expected answer: "{expected_answer}"
+Accepted answers: "{accepted_answers}"
 Student answer: "{user_answer}"
 Language: "{language}"
 
@@ -1400,10 +1957,18 @@ def call_ai_api(messages, provider="openai", model="gpt-4.1-mini", max_tokens=20
     except Exception as e:
         raise Exception(f"Erreur inattendue: {str(e)}")
 
-def get_language_specific_prompt(language, question_text, true_answer, user_answer):
+def _format_accepted_answers_for_prompt(accepted_answers) -> str:
+    if isinstance(accepted_answers, str):
+        return accepted_answers
+    if not accepted_answers:
+        return ""
+    return "; ".join(str(answer) for answer in accepted_answers if str(answer).strip())
+
+def get_language_specific_prompt(language, question_text, true_answer, accepted_answers, user_answer):
     """
     **MODIFIÉ: Génère un prompt selon la langue configurée avec contexte de question**
     """
+    accepted_answers_text = _format_accepted_answers_for_prompt(accepted_answers)
     
     prompts = {
         "english": f"""
@@ -1411,6 +1976,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
 
         Question: "{question_text}"
         Expected answer: "{true_answer}"
+        Accepted answers: "{accepted_answers_text}"
         Student's answer: "{user_answer}"
 
         Please provide your evaluation in the following JSON format:
@@ -1433,6 +1999,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
 
         Question: "{question_text}"
         Réponse attendue: "{true_answer}"
+        Réponses acceptées: "{accepted_answers_text}"
         Réponse de l'étudiant: "{user_answer}"
 
         Veuillez fournir votre évaluation au format JSON suivant:
@@ -1455,6 +2022,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
 
         Pregunta: "{question_text}"
         Respuesta esperada: "{true_answer}"
+        Respuestas aceptadas: "{accepted_answers_text}"
         Respuesta del estudiante: "{user_answer}"
 
         Por favor proporciona tu evaluación en el siguiente formato JSON:
@@ -1477,6 +2045,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
 
         Frage: "{question_text}"
         Erwartete Antwort: "{true_answer}"
+        Akzeptierte Antworten: "{accepted_answers_text}"
         Antwort des Studenten: "{user_answer}"
 
         Bitte geben Sie Ihre Bewertung im folgenden JSON-Format an:
@@ -1499,6 +2068,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
 
         Вопрос: "{question_text}"
         Ожидаемый ответ: "{true_answer}"
+        Допустимые ответы: "{accepted_answers_text}"
         Ответ студента: "{user_answer}"
 
         Предоставьте оценку в формате JSON:
@@ -1519,6 +2089,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
 
         問題: "{question_text}"
         期待される回答: "{true_answer}"
+        許容される回答: "{accepted_answers_text}"
         学習者の回答: "{user_answer}"
 
         次のJSON形式で返してください:
@@ -1539,6 +2110,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
 
         题目: "{question_text}"
         期望答案: "{true_answer}"
+        可接受答案: "{accepted_answers_text}"
         学生答案: "{user_answer}"
 
         请使用以下 JSON 格式输出:
@@ -1559,6 +2131,7 @@ def get_language_specific_prompt(language, question_text, true_answer, user_answ
 
         질문: "{question_text}"
         정답: "{true_answer}"
+        허용 답변: "{accepted_answers_text}"
         학생 답변: "{user_answer}"
 
         다음 JSON 형식으로 답변하세요:
@@ -1590,7 +2163,7 @@ def get_system_message_for_language(language):
     }
     return system_messages.get(language, system_messages["english"])
 
-def build_analysis_prompt(config, language, question_text, true_answer, user_answer):
+def build_analysis_prompt(config, language, question_text, true_answer, accepted_answers, user_answer):
     use_custom_prompt = bool(config.get("use_custom_prompt", False))
     template = (config.get("custom_analysis_prompt_template", "") or "").strip()
 
@@ -1599,6 +2172,7 @@ def build_analysis_prompt(config, language, question_text, true_answer, user_ans
         replacements = {
             "{question}": question_text or "",
             "{expected_answer}": true_answer or "",
+            "{accepted_answers}": _format_accepted_answers_for_prompt(accepted_answers),
             "{user_answer}": user_answer or "",
             "{language}": language or "english",
         }
@@ -1606,7 +2180,7 @@ def build_analysis_prompt(config, language, question_text, true_answer, user_ans
             rendered = rendered.replace(token, value)
         return rendered
 
-    return get_language_specific_prompt(language, question_text, true_answer, user_answer)
+    return get_language_specific_prompt(language, question_text, true_answer, accepted_answers, user_answer)
 
 def get_language_name(language_key: str) -> str:
     mapping = {
@@ -1630,7 +2204,7 @@ def get_language_lock_instruction(language_key: str) -> str:
         f'- Return valid JSON only.'
     )
 
-def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: str) -> dict:
+def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str) -> dict:
     """
     **MODIFIÉ: Analyse la réponse de l'utilisateur avec l'IA en incluant le contexte de la question**
     Retourne un dictionnaire avec le score, les conseils et la suggestion de révision
@@ -1657,7 +2231,7 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, user_answer: st
     elif not api_key:
         return make_analysis_unavailable(f"{PROVIDERS[provider]['name']} API key not configured", language)
     
-    prompt = build_analysis_prompt(config, language, question_text, true_answer, user_answer) + get_language_lock_instruction(language)
+    prompt = build_analysis_prompt(config, language, question_text, true_answer, accepted_answers, user_answer) + get_language_lock_instruction(language)
     custom_system_prompt = (config.get("custom_system_prompt", "") or "").strip()
     system_message = custom_system_prompt or get_system_message_for_language(language)
 
@@ -1834,6 +2408,7 @@ def setup_config_menu():
                 lang_key,
                 "{question}",
                 "{expected_answer}",
+                "{accepted_answers}",
                 "{user_answer}",
             )
             custom_system_input.setPlaceholderText(ui["custom_system_placeholder"] + "\n\n" + localized_system)
@@ -1847,6 +2422,7 @@ def setup_config_menu():
                     lang_key,
                     "{question}",
                     "{expected_answer}",
+                    "{accepted_answers}",
                     "{user_answer}",
                 )
             )
@@ -1858,6 +2434,7 @@ def setup_config_menu():
                 lang_key,
                 "{question}",
                 "{expected_answer}",
+                "{accepted_answers}",
                 "{user_answer}",
             )
             payload = (
@@ -2160,6 +2737,9 @@ def refresh_ai_analysis():
 
 
 def regenerate_ai_analysis():
+    card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
+    if not should_score_card(card):
+        return
     context = dict(current_analysis_context)
     cache_key = context.get("cache_key")
     expected_provided_tuple = context.get("expected_provided_tuple")
@@ -2202,6 +2782,7 @@ def init():
     ai_analysis_cache.clear()
     is_analyzing.clear()
     analysis_results.clear()
+    reset_active_question_state()
     
 def _debug_dump_front(text, card, kind):
     if kind and "Question" in kind:

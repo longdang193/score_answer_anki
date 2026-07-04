@@ -34,7 +34,31 @@ class DummyAddonManager:
         self.config = dict(config)
 
 
+class DummyNote(dict):
+    def __init__(self, model_name="card_1_score", template_name=None):
+        if template_name is None:
+            template_name = model_name
+        super().__init__({
+            "Front": "13 * 17 = ?",
+            "Front_variants": "17 * 13 = ?",
+            "Back": "221",
+            "Back_variants": "two hundred twenty-one;;221.0",
+        })
+        self._model = {"name": model_name, "tmpls": [{"name": template_name}]}
+
+    def model(self):
+        return self._model
+
+
 class DummyCard:
+    def __init__(self, model_name="card_1_score", template_name=None):
+        self.id = 1
+        self.ord = 0
+        self._note = DummyNote(model_name=model_name, template_name=template_name)
+
+    def note(self):
+        return self._note
+
     def question(self):
         return "13 * 17 = ? [[type:Back]]"
 
@@ -95,14 +119,54 @@ def main():
     assert cache_key not in addon.ai_analysis_cache
     assert cache_key not in addon.analysis_results
 
-    prompt = addon.get_language_specific_prompt("english", "13 * 17 = ?", "221", "2")
+    prompt = addon.get_language_specific_prompt("english", "13 * 17 = ?", "221", ["221", "221.0"], "2")
     assert "review_suggestion" not in prompt
+    assert "Accepted answers" in prompt
+    assert "221.0" in prompt
+
+    mismatch = addon.make_variant_mismatch_result("Variant mismatch", "english")
+    assert mismatch["status"] == "variant_mismatch"
+    assert mismatch["score"] is None
 
     addon.analysis_results[cache_key] = {"scored": True, "score": 0, "tips": "Wrong."}
     rendered = addon.render_enhanced_comparison("<div>anki compare</div>", "221", "2", "[[type:Back]]")
     assert "Question Context" not in rendered
     assert "Review Suggestion" not in rendered
-    assert "Regenerate Analysis" in rendered
+    assert "Regenerate Analysis" not in rendered
+    assert "Improvement Tips" not in rendered
+    assert "🤖" not in rendered
+    assert "❌" not in rendered
+    assert "aqi-panel-head" in rendered
+    assert "aqi-regenerate-btn" in rendered
+    assert "aqi-panel-body" in rendered
+    assert 'class="aqi-shell"' in rendered
+    assert "font-family: -apple-system" not in rendered
+    assert "Wrong." in rendered
+    assert "⟳" in rendered
+
+    payload = addon.build_analysis_prompt_payload(mw.reviewer.card, "17")
+    assert payload["question_text"] == "13 * 17 = ?"
+    assert payload["canonical_answer"] == "221"
+    assert payload["accepted_answers"] == ["221", "two hundred twenty-one", "221.0"]
+    assert payload["user_answer"] == "17"
+
+    plain_card = DummyCard(model_name="card_1")
+    mw.reviewer.card = plain_card
+    plain_payload = addon.build_analysis_prompt_payload(plain_card, "17")
+    plain_cache_key = addon.build_analysis_cache_key(
+        plain_payload["question_text"],
+        plain_payload["canonical_answer"],
+        plain_payload["user_answer"],
+    )
+    addon.store_ai_analysis(("221", "17"), "[[type:Back]]")
+    assert plain_cache_key not in addon.is_analyzing
+    assert addon.render_enhanced_comparison("<div>plain compare</div>", "221", "17", "[[type:Back]]") == "<div>plain compare</div>"
+
+    note_type_score_only_card = DummyCard(model_name="card_1_score", template_name="card_1")
+    assert addon.should_score_card(note_type_score_only_card) is False
+
+    template_score_card = DummyCard(model_name="card_1", template_name="card_1_score")
+    assert addon.should_score_card(template_score_card) is True
 
     handled, _ = addon.handle_js_message((False, None), "regenerate_ai_analysis", None)
     assert handled is True
