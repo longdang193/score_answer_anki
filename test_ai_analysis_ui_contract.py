@@ -66,8 +66,10 @@ class DummyCard:
 class DummyReviewer:
     def __init__(self):
         self.card = DummyCard()
+        self.show_answer_calls = 0
 
     def _showAnswer(self):
+        self.show_answer_calls += 1
         return None
 
 
@@ -144,6 +146,16 @@ def read_addon_source() -> str:
 
 def main():
     addon, mw = load_addon_module()
+    source = read_addon_source()
+
+    assert "def build_ai_loading_fragment(" in source
+    assert source.count("build_ai_loading_fragment(") >= 3
+    assert "def build_ai_action_button(" in source
+    assert source.count("build_ai_action_button(") >= 3
+    assert "def refresh_dom_fragment(" in source
+    assert source.count("refresh_dom_fragment(") >= 3
+    assert "def build_ai_analysis_panel_html(" in source
+    assert source.count("build_ai_analysis_panel_html(") >= 2
 
     merged_legacy = addon.merge_config_with_defaults({"use_custom_prompt": True})
     assert merged_legacy["prompt_profile"] == "custom"
@@ -195,6 +207,8 @@ def main():
     assert resolved_custom["system_prompt"] == "System custom"
     assert resolved_custom["analysis_prompt_template"] == "Q={question} A={expected_answer} U={user_answer}"
     assert resolved_custom["hint_prompt_template"] == "Hint for Q={question} A={expected_answer} H={hint}"
+
+    assert max(addon.get_config()["max_tokens"], 100) >= 200
 
     assert hasattr(addon, "build_analysis_cache_key")
     cache_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "2")
@@ -277,12 +291,25 @@ def main():
     assert "🤖" not in rendered
     assert "❌" not in rendered
     assert "aqi-panel-head" in rendered
-    assert "aqi-regenerate-btn" in rendered
+    assert "aqi-ai-action-btn" in rendered
     assert "aqi-panel-body" in rendered
     assert 'class="aqi-shell"' in rendered
     assert "font-family: -apple-system" not in rendered
     assert "Wrong." in rendered
     assert "⟳" in rendered
+    assert "Regenerate" in rendered
+
+    loading_analysis_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "17")
+    addon.analysis_results.pop(loading_analysis_key, None)
+    addon.ai_analysis_cache.pop(loading_analysis_key, None)
+    addon.is_analyzing[loading_analysis_key] = True
+    loading_rendered = addon.render_enhanced_comparison("<div>anki compare</div>", "221", "17", "[[type:Back]]")
+    assert "aqi-analysis-panel-wrap" in loading_rendered
+    assert "aqi-loading-card" in loading_rendered
+    assert "AI in progress..." in loading_rendered
+    assert "Please wait while AI works" in loading_rendered
+    assert "setTimeout(" not in loading_rendered
+    addon.is_analyzing.pop(loading_analysis_key, None)
 
     perfect_cache_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "221")
     addon.analysis_results[perfect_cache_key] = {"scored": True, "score": 10, "tips": "Perfect."}
@@ -323,9 +350,50 @@ def main():
     handled, _ = addon.handle_js_message((False, None), "regenerate_ai_analysis", None)
     assert handled is True
 
+    addon.current_analysis_context.update(
+        {
+            "card_id": mw.reviewer.card.id,
+            "cache_key": perfect_cache_key,
+            "expected_provided_tuple": ("221", "221"),
+            "type_pattern": "[[type:Back]]",
+        }
+    )
+    mw.reviewer.web.commands.clear()
+    mw.reviewer.show_answer_calls = 0
+    addon.refresh_ai_analysis()
+    assert mw.reviewer.web.commands
+    assert "aqi-analysis-panel-wrap" in mw.reviewer.web.commands[-1]
+    assert mw.reviewer.show_answer_calls == 0
+
     template_score_card.note()["Hint"] = "<b>Factor pairs</b>"
     assert addon.is_supported_typed_answer_card(template_score_card, template_score_card.question(), "Question") is True
     assert addon.is_front_hint_eligible(template_score_card, template_score_card.question(), "Question") is True
+
+    addon.reset_active_question_state()
+    addon.get_or_choose_active_question_variant(template_score_card, rng=lambda seq: seq[0])
+    hint_context_a = addon.build_front_hint_context(template_score_card)
+    analysis_payload_a = addon.build_analysis_prompt_payload(template_score_card, "17")
+
+    addon.reset_active_question_state()
+    addon.get_or_choose_active_question_variant(template_score_card, rng=lambda seq: seq[1])
+    hint_context_b = addon.build_front_hint_context(template_score_card)
+    analysis_payload_b = addon.build_analysis_prompt_payload(template_score_card, "17")
+
+    assert hint_context_a["question_text"] == "13 * 17 = ?"
+    assert hint_context_b["question_text"] == "17 * 13 = ?"
+    assert hint_context_a["cache_key"] != hint_context_b["cache_key"]
+    assert analysis_payload_a["question_text"] == "13 * 17 = ?"
+    assert analysis_payload_b["question_text"] == "17 * 13 = ?"
+    assert addon.build_analysis_cache_key(
+        analysis_payload_a["question_text"],
+        analysis_payload_a["canonical_answer"],
+        analysis_payload_a["user_answer"],
+    ) != addon.build_analysis_cache_key(
+        analysis_payload_b["question_text"],
+        analysis_payload_b["canonical_answer"],
+        analysis_payload_b["user_answer"],
+    )
+    addon.reset_active_question_state()
 
     plain_question_card = DummyCard(model_name="card_1", template_name="card_1_score")
     plain_question_card.question = lambda: "No typed answer here"
@@ -335,8 +403,9 @@ def main():
     addon.save_config({"enabled": False, "prompt_profile": "default"})
     front_rendered = addon.render_front_hint_panel("<div>front side</div>", template_score_card, "Question")
     assert "aqi-front-hint-panel" in front_rendered
-    assert "Hint" in front_rendered
+    assert "aqi-panel-card aqi-front-hint-card" in front_rendered
     assert "<b>Factor pairs</b>" in front_rendered
+    assert "aqi-front-hint-label" not in front_rendered
     assert "Suggest Hint" in front_rendered
     assert "disabled" in front_rendered
 
@@ -363,6 +432,16 @@ def main():
     assert handled is True
     handled, _ = addon.handle_js_message((False, None), "regenerate_ai_hint", None)
     assert handled is True
+
+    loading_hint_context = addon.build_front_hint_context(template_score_card)
+    addon.front_hint_panel_state.update({"cache_key": loading_hint_context["cache_key"], "is_open": True})
+    addon.hint_cache[loading_hint_context["cache_key"]] = {"status": "loading", "hint_text": "", "error_text": ""}
+    loading_hint_rendered = addon.render_front_hint_panel("<div>front side</div>", template_score_card, "Question")
+    assert "aqi-loading-card" in loading_hint_rendered
+    assert "AI in progress..." in loading_hint_rendered
+    assert "Please wait while AI works" in loading_hint_rendered
+    assert "aqi-ai-action-btn" in loading_hint_rendered
+    assert "disabled" in loading_hint_rendered
 
     addon.refresh_front_hint_panel_dom("<div id='aqi-front-hint-body'>patched</div>")
     assert mw.reviewer.web.commands
@@ -399,6 +478,10 @@ def main():
     assert addon.front_hint_panel_state["is_open"] is True
     assert mw.reviewer.web.commands
     assert "&lt;221&gt;" in mw.reviewer.web.commands[-1]
+    ready_hint_rendered = addon.render_front_hint_panel("<div>front side</div>", template_score_card, "Question")
+    assert "aqi-ai-action-btn" in ready_hint_rendered
+    assert "Regenerate" in ready_hint_rendered
+    assert "⟳" in ready_hint_rendered
 
     regen_hint = addon.regenerate_ai_hint()
     assert regen_hint["status"] == "ready"

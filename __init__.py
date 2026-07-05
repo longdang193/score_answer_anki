@@ -91,6 +91,19 @@ HINT_UI_TEXTS = {
     },
 }
 
+AI_UI_TEXTS = {
+    "english": {"loading_title": "AI in progress...", "loading_body": "Please wait while AI works", "loading_note": "Automatic refresh...", "regenerate": "Regenerate"},
+    "french": {"loading_title": "IA en cours...", "loading_body": "Veuillez patienter pendant que l'IA travaille", "loading_note": "Actualisation automatique...", "regenerate": "Relancer"},
+    "spanish": {"loading_title": "IA en progreso...", "loading_body": "Por favor espera mientras la IA trabaja", "loading_note": "Actualización automática...", "regenerate": "Regenerar"},
+    "german": {"loading_title": "KI läuft...", "loading_body": "Bitte warten Sie, während die KI arbeitet", "loading_note": "Automatische Aktualisierung...", "regenerate": "Neu erzeugen"},
+    "portuguese": {"loading_title": "IA em andamento...", "loading_body": "Aguarde enquanto a IA trabalha", "loading_note": "Atualização automática...", "regenerate": "Gerar novamente"},
+    "italian": {"loading_title": "IA in corso...", "loading_body": "Attendi mentre l'IA lavora", "loading_note": "Aggiornamento automatico...", "regenerate": "Rigenera"},
+    "russian": {"loading_title": "ИИ в процессе...", "loading_body": "Подождите, пока ИИ работает", "loading_note": "Автоматическое обновление...", "regenerate": "Повторить"},
+    "japanese": {"loading_title": "AI処理中...", "loading_body": "AIの処理が完了するまでお待ちください", "loading_note": "自動更新...", "regenerate": "再生成"},
+    "chinese": {"loading_title": "AI 处理中...", "loading_body": "请稍候，AI 正在工作", "loading_note": "自动刷新...", "regenerate": "重新生成"},
+    "korean": {"loading_title": "AI 진행 중...", "loading_body": "AI가 작업하는 동안 잠시만 기다려 주세요", "loading_note": "자동 새로고침...", "regenerate": "다시 생성"},
+}
+
 QUESTION_VARIANT_SEPARATOR = ";;"
 QUESTION_FIELD = "Front"
 QUESTION_VARIANTS_FIELD = "Front_variants"
@@ -633,22 +646,45 @@ textarea#typeans:focus,
   font-family: var(--aqi-font-body) !important;
 }
 
-.aqi-regenerate-btn {
+.aqi-ai-action-btn {
   background: var(--aqi-control-bg);
   color: var(--aqi-score-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--aqi-control-border);
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.10);
+  cursor: pointer;
+  font-family: var(--aqi-font-body) !important;
+}
+
+.aqi-ai-action-btn[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.aqi-ai-action-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.aqi-ai-action-label {
+  line-height: 1.2;
+}
+
+.aqi-regenerate-btn {
   width: 38px;
   height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
-  border-radius: 999px;
-  border: 1px solid var(--aqi-control-border);
-  font-weight: 700;
   font-size: 24px;
-  line-height: 1;
-  box-shadow: 0 3px 10px rgba(0,0,0,0.10);
-  cursor: pointer;
 }
 
 .aqi-score-badge {
@@ -666,6 +702,50 @@ textarea#typeans:focus,
   background: var(--aqi-panel-body-bg);
   border-radius: 12px;
   border-left: 4px solid var(--aqi-score-color);
+}
+
+.aqi-front-hint-wrap {
+  font-family: var(--aqi-font-body) !important;
+  max-width: 800px;
+  margin: 16px auto 0 auto;
+  text-align: center;
+}
+
+.aqi-front-hint-toggle {
+  appearance: none;
+  border: 1px solid var(--sqv-chip-border) !important;
+  background: var(--sqv-chip-bg) !important;
+  color: var(--sqv-question-fg) !important;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.aqi-front-hint-toggle {
+  margin-bottom: 12px;
+}
+
+.aqi-front-hint-card {
+  margin-top: 0;
+}
+
+.aqi-front-hint-panel.is-hidden {
+  display: none;
+}
+
+.aqi-front-hint-manual,
+.aqi-front-hint-ai {
+  margin: 0;
+}
+
+.aqi-front-hint-manual + .aqi-front-hint-ai {
+  margin-top: 12px;
+}
+
+.aqi-front-hint-actions {
+  margin-top: 14px;
 }
 
 .aqi-section-copy {
@@ -794,6 +874,7 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
     cache_key = build_analysis_cache_key(payload["question_text"], payload["canonical_answer"], user_answer)
     current_analysis_context.update(
         {
+            "card_id": getattr(card, "id", None),
             "expected_provided_tuple": (payload["canonical_answer"], user_answer),
             "type_pattern": type_pattern,
             "cache_key": cache_key,
@@ -853,7 +934,7 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
 
         # Rafraîchir l'affichage
         try:
-            refresh_ai_analysis()
+            refresh_ai_analysis({"card_id": getattr(card, "id", None), "cache_key": cache_key})
         except Exception as e:
             print(f"Refresh error after AI analysis: {e}")
 
@@ -1091,6 +1172,52 @@ def build_hint_prompt(context_data: dict, config=None) -> tuple[str, str]:
     prompt += f"\n\nReturn only one concise hint in {get_language_name(language)}. Do not reveal the full answer."
     return resolved["system_prompt"], prompt
 
+def build_ai_loading_fragment(language: str = "english", title: str | None = None, body: str | None = None, note: str | None = None) -> str:
+    texts = get_ai_ui_texts(language)
+    resolved_title = html.escape((title or texts.get("loading_title", "AI in progress...")).strip())
+    resolved_body = html.escape((body or texts.get("loading_body", "Please wait while AI works")).strip())
+    resolved_note = html.escape((note or texts.get("loading_note", "Automatic refresh...")).strip())
+    return f"""
+    <div class="aqi-loading-card">
+        <div class="aqi-loading-head">
+            <div class="aqi-loading-spinner"></div>
+            <div class="aqi-loading-title">{resolved_title}</div>
+        </div>
+        <p class="aqi-loading-copy">{resolved_body}</p>
+        <p class="aqi-loading-note">{resolved_note}</p>
+    </div>
+    """
+
+def build_ai_action_button(action_message: str, label: str, icon: str = "", disabled: bool = False, title: str | None = None, extra_classes: str = "") -> str:
+    button_title = html.escape((title or label or "").strip())
+    button_label = html.escape((label or "").strip())
+    button_attrs = ' disabled aria-disabled="true"' if disabled else ""
+    class_suffix = f" {extra_classes.strip()}" if extra_classes.strip() else ""
+    icon_html = f'<span class="aqi-ai-action-icon">{html.escape(icon)}</span>' if icon else ""
+    label_html = f'<span class="aqi-ai-action-label">{button_label}</span>' if button_label else ""
+    return (
+        f'<button class="aqi-ai-action-btn{class_suffix}" type="button" title="{button_title}" aria-label="{button_title}"{button_attrs} '
+        f'onclick="if (typeof pycmd === \'function\') pycmd(\'{action_message}\'); return false;">'
+        f'{icon_html}{label_html}'
+        '</button>'
+    )
+
+def refresh_dom_fragment(selector: str, fragment_html: str) -> bool:
+    reviewer = getattr(mw, "reviewer", None)
+    web = getattr(reviewer, "web", None)
+    if not web or not hasattr(web, "eval"):
+        return False
+    escaped_selector = json.dumps(selector)
+    escaped_html = json.dumps(fragment_html)
+    command = (
+        "(function(){"
+        "var wrap=document.querySelector(" + escaped_selector + ");"
+        "if(wrap){wrap.outerHTML=" + escaped_html + ";}"
+        "})();"
+    )
+    web.eval(command)
+    return True
+
 def build_front_hint_panel_html(card, rendered_text: str = "", kind: str = "Question") -> str:
     if not kind or "Question" not in kind:
         return ""
@@ -1106,6 +1233,7 @@ def build_front_hint_panel_html(card, rendered_text: str = "", kind: str = "Ques
     config = get_config()
     language = context.get("language", config.get("language", "english"))
     texts = get_hint_ui_texts(language)
+    ai_texts = get_ai_ui_texts(language)
     availability_reason = get_hint_availability_reason(config, language)
     manual_hint_html = context["manual_hint"]
     ai_state = dict(hint_cache.get(cache_key, {}) or {})
@@ -1116,42 +1244,51 @@ def build_front_hint_panel_html(card, rendered_text: str = "", kind: str = "Ques
     ai_hint_text = html.escape((ai_state.get("hint_text", "") or "").strip())
     ai_error_text = html.escape((ai_state.get("error_text", "") or "").strip())
     ai_body = ""
+    ai_block = ""
     if status == "loading":
-        ai_body = html.escape(texts.get("hint_loading", "Generating hint..."))
+        ai_block = build_ai_loading_fragment(language)
     elif ai_hint_text or ai_error_text:
         ai_body = ai_hint_text or ai_error_text
-    ai_block = ""
     if ai_body:
         ai_block = (
-            f'<div class="aqi-front-hint-section"><div class="aqi-front-hint-label">{html.escape(texts.get("ai_hint_label", "AI Hint"))}</div>'
-            f'<div id="aqi-front-hint-body">{ai_body}</div></div>'
+            f'<p class="aqi-section-copy aqi-front-hint-ai"><strong>{html.escape(texts.get("ai_hint_label", "AI Hint"))}:</strong> '
+            f'<span id="aqi-front-hint-body">{ai_body}</span></p>'
         )
 
     if status == "ready":
-        button_label = texts.get("suggest_hint_again", "Suggest Again")
-        action_message = "regenerate_ai_hint"
+        button_html = build_ai_action_button(
+            "regenerate_ai_hint",
+            ai_texts.get("regenerate", "Regenerate"),
+            icon="⟳",
+            extra_classes="aqi-front-hint-action",
+        )
     else:
-        button_label = texts.get("suggest_hint", "Suggest Hint")
-        action_message = "suggest_ai_hint"
-    button_disabled = bool(availability_reason) or status == "loading"
-    button_attrs = ' disabled aria-disabled="true"' if button_disabled else ""
-    if availability_reason:
-        button_attrs += f' title="{html.escape(make_hint_unavailable(availability_reason, language)["error_text"])}"'
-    panel_style = "" if is_open else "display:none;"
+        button_title = ""
+        if availability_reason:
+            button_title = make_hint_unavailable(availability_reason, language)["error_text"]
+        button_html = build_ai_action_button(
+            "suggest_ai_hint",
+            texts.get("suggest_hint", "Suggest Hint"),
+            disabled=bool(availability_reason) or status == "loading",
+            title=button_title or texts.get("suggest_hint", "Suggest Hint"),
+            extra_classes="aqi-front-hint-action",
+        )
+    panel_class = "aqi-front-hint-panel" if is_open else "aqi-front-hint-panel is-hidden"
     manual_block = ""
     if manual_hint_html:
-        manual_block = (
-            f'<div class="aqi-front-hint-section"><div class="aqi-front-hint-label">{html.escape(texts.get("hint_label", "Hint"))}</div>'
-            f'<div class="aqi-front-manual-hint">{manual_hint_html}</div></div>'
-        )
+        manual_block = f'<div class="aqi-section-copy aqi-front-hint-manual">{manual_hint_html}</div>'
     return (
         '<div class="aqi-front-hint-wrap">'
         f'<button class="aqi-front-hint-toggle" type="button" onclick="if (typeof pycmd === \'function\') pycmd(\'toggle_hint_panel\'); return false;">{html.escape(texts.get("hint_toggle", "Hint"))}</button>'
-        f'<div id="aqi-front-hint-panel" style="{panel_style}">'
+        f'<div id="aqi-front-hint-panel" class="{panel_class}">'
+        '<div class="aqi-panel-card aqi-front-hint-card" data-score-tier="na">'
+        '<div class="aqi-panel-body">'
         f'{manual_block}'
         f'{ai_block}'
-        '<div id="aqi-front-hint-actions">'
-        f'<button class="aqi-front-hint-action" type="button"{button_attrs} onclick="if (typeof pycmd === \'function\') pycmd(\'{action_message}\'); return false;">{html.escape(button_label)}</button>'
+        '<div class="aqi-front-hint-actions">'
+        f'{button_html}'
+        '</div>'
+        '</div>'
         '</div>'
         '</div>'
         '</div>'
@@ -1175,18 +1312,76 @@ def refresh_current_front_hint_panel(cache_key: str | None = None) -> None:
     refresh_front_hint_panel_dom(panel_html)
 
 def refresh_front_hint_panel_dom(panel_html: str) -> None:
-    reviewer = getattr(mw, "reviewer", None)
-    web = getattr(reviewer, "web", None)
-    if not web or not hasattr(web, "eval"):
-        return
-    escaped_html = json.dumps(panel_html)
-    command = (
-        "(function(){"
-        "var wrap=document.querySelector('.aqi-front-hint-wrap');"
-        "if(wrap){wrap.outerHTML=" + escaped_html + ";}"
-        "})();"
+    refresh_dom_fragment('.aqi-front-hint-wrap', panel_html)
+
+def build_ai_analysis_panel_html(cache_key: str, language: str = "english") -> str:
+    texts = get_ui_texts(language)
+    ai_texts = get_ai_ui_texts(language)
+    if is_analyzing.get(cache_key, False) and cache_key not in ai_analysis_cache:
+        return (
+            '<div class="aqi-analysis-panel-wrap">'
+            f'{build_ai_loading_fragment(language)}'
+            '</div>'
+        )
+
+    ai_analysis = analysis_results.get(cache_key) or ai_analysis_cache.get(cache_key)
+    if not ai_analysis:
+        ai_analysis = make_analysis_unavailable("", language)
+
+    is_scored = bool(ai_analysis.get("scored", True)) and isinstance(ai_analysis.get("score"), int)
+    score = ai_analysis.get('score', 5) if is_scored else None
+    score_tier = get_score_tier(score, is_scored)
+    score_badge = f"{score}/10" if is_scored else "N/A"
+    regenerate_button = build_ai_action_button(
+        "regenerate_ai_analysis",
+        ai_texts.get("regenerate", "Regenerate"),
+        icon="⟳",
     )
-    web.eval(command)
+    tips = ai_analysis.get('tips', texts.get('no_tips_available', 'No tips available'))
+    return f"""
+    <div class="aqi-analysis-panel-wrap">
+        <div class="aqi-panel-card" data-score-tier="{score_tier}">
+            <div class="aqi-panel-head">
+                <div class="aqi-panel-title-wrap">
+                    <h3 class="aqi-panel-title">
+                        {texts.get('ai_analysis', 'AI Analysis')}
+                    </h3>
+                </div>
+                {regenerate_button}
+                <div class="aqi-score-badge">
+                    {score_badge}
+                </div>
+            </div>
+            <div class="aqi-panel-body">
+                <p class="aqi-section-copy">
+                    {tips}
+                </p>
+            </div>
+        </div>
+    </div>
+    """
+
+def refresh_ai_analysis_panel_dom(panel_html: str) -> bool:
+    return refresh_dom_fragment('.aqi-analysis-panel-wrap', panel_html)
+
+def refresh_current_ai_analysis_panel(request_identity: dict | None = None) -> bool:
+    reviewer = getattr(mw, "reviewer", None)
+    card = getattr(reviewer, "card", None)
+    if not card:
+        return False
+    context = dict(current_analysis_context)
+    identity = dict(request_identity or context)
+    cache_key = identity.get("cache_key")
+    if not cache_key:
+        return False
+    if identity.get("card_id") is not None and identity.get("card_id") != getattr(card, "id", None):
+        return False
+    if context.get("cache_key") != cache_key:
+        return False
+    if context.get("card_id") is not None and context.get("card_id") != getattr(card, "id", None):
+        return False
+    language = get_config().get("language", "english")
+    return refresh_ai_analysis_panel_dom(build_ai_analysis_panel_html(cache_key, language))
 
 def suggest_ai_hint() -> dict:
     reviewer = getattr(mw, "reviewer", None)
@@ -1438,6 +1633,19 @@ def get_active_question_variant(card) -> str | None:
         return chosen_variant
     return None
 
+def _prepare_active_question_state_for_render(card, kind: str) -> None:
+    if not card or not kind or ("Question" not in kind and "Answer" not in kind):
+        return
+    render_phase = "Question" if "Question" in kind else "Answer"
+    card_id = getattr(card, "id", None)
+    if render_phase == "Question":
+        last_render_phase = active_question_state.get("last_render_phase")
+        last_render_card_id = active_question_state.get("last_render_card_id")
+        if last_render_phase != "Question" or last_render_card_id != card_id:
+            reset_active_question_state()
+    active_question_state["last_render_phase"] = render_phase
+    active_question_state["last_render_card_id"] = card_id
+
 def get_or_choose_active_question_variant(card, rng=None) -> str | None:
     eligible_variants = get_eligible_question_variants(card)
     if len(eligible_variants) <= 1:
@@ -1504,6 +1712,8 @@ def apply_question_variant_to_rendered_question(text: str, card, kind: str) -> s
     if not kind or ("Question" not in kind and "Answer" not in kind):
         return text
 
+    _prepare_active_question_state_for_render(card, kind)
+
     chosen_variant = get_or_choose_active_question_variant(card)
     if not chosen_variant:
         return text
@@ -1543,6 +1753,7 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     config = get_config()
     language = config.get("language", "english")
     texts = get_ui_texts(language)
+    ai_texts = get_ai_ui_texts(language)
     labels = get_compare_labels(config)
     show_anki = config.get("show_anki_compare", True)
     show_code = config.get("show_code_compare", True)
@@ -1559,77 +1770,13 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     cache_key = build_analysis_cache_key(question_text, initial_expected, initial_provided)
     current_analysis_context.update(
         {
+            "card_id": getattr(card, "id", None),
             "expected_provided_tuple": (initial_expected or "", initial_provided or ""),
             "type_pattern": type_pattern,
             "cache_key": cache_key,
         }
     )
     print(f"Rendering comparison for key: {cache_key}")
-    
-    # Vérification simplifiée - si l'analyse est en cours, afficher un message simple
-    if is_analyzing.get(cache_key, False) and cache_key not in ai_analysis_cache:
-        print(f"Analysis in progress for {cache_key}, showing simple loading message")
-        # Message de chargement simple sans JavaScript compliqué
-        # Dans render_enhanced_comparison, remplacer le spinner_output par :
-        spinner_output = f"""
-        <div class="aqi-shell">
-
-            <!-- Comparaison par défaut d'Anki -->
-            <div class="aqi-anki-compare">
-                {output}
-            </div>
-
-            <!-- Bloc chargement -->
-            <div class="aqi-loading-card">
-                <div class="aqi-loading-head">
-                    <div class="aqi-loading-spinner"></div>
-                    <div class="aqi-loading-title">{texts['analyzing']}</div>
-                </div>
-                <p class="aqi-loading-copy">
-                    {texts['please_wait']}
-                </p>
-                <p class="aqi-loading-note">
-                    Actualisation automatique...
-                </p>
-            </div>
-
-            <!-- Style + auto-refresh doux -->
-            <style>
-            @keyframes aki_spin {{ to {{ transform: rotate(360deg); }} }}
-            </style>
-            <script>
-            // Relance un rafraîchissement du verso pendant l'analyse.
-            // Sans boucle infinie: on appelle 1 fois à T+1.2s; si encore en cours, le même bloc se ré-affichera et relancera ce timeout.
-            setTimeout(function() {{
-                if (typeof pycmd === 'function') {{
-                pycmd('refresh_ai_analysis');
-                }}
-            }}, 1200);
-            </script>
-        </div>
-        """
-        return spinner_output
-    
-    # Récupérer l'analyse IA stockée avec debug
-    ai_analysis = analysis_results.get(cache_key) or ai_analysis_cache.get(cache_key)
-    print(f"Retrieved analysis for {cache_key}: {ai_analysis is not None}")
-    
-    # Si l'analyse n'est pas disponible, utiliser des valeurs par défaut
-    if not ai_analysis:
-        print(f"No analysis available for {cache_key}, using defaults")
-        ai_analysis = make_analysis_unavailable("", language)
-    
-    is_scored = bool(ai_analysis.get("scored", True)) and isinstance(ai_analysis.get("score"), int)
-
-    score = ai_analysis.get('score', 5) if is_scored else None
-    score_tier = get_score_tier(score, is_scored)
-
-    score_badge = f"{score}/10" if is_scored else "N/A"
-    regenerate_button = f"""
-                <button class="aqi-regenerate-btn" title="Regenerate" aria-label="Regenerate" onclick="if (typeof pycmd === 'function') pycmd('regenerate_ai_analysis'); return false;">
-                    ⟳
-                </button>
-    """
     
     # Affichage alternatif fidèle pour le code (en plus du diff Anki)
     anki_section = f"""
@@ -1646,26 +1793,7 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
         {anki_section}
         {code_block}
         
-        <div class="aqi-panel-card" data-score-tier="{score_tier}">
-            
-            <div class="aqi-panel-head">
-                <div class="aqi-panel-title-wrap">
-                    <h3 class="aqi-panel-title">
-                        {texts.get('ai_analysis', 'AI Analysis')}
-                    </h3>
-                </div>
-                {regenerate_button}
-                <div class="aqi-score-badge">
-                    {score_badge}
-                </div>
-            </div>
-            
-            <div class="aqi-panel-body">
-                <p class="aqi-section-copy">
-                    {ai_analysis.get('tips', texts.get('no_tips_available', 'No tips available'))}
-                </p>
-            </div>
-        </div>
+        {build_ai_analysis_panel_html(cache_key, language)}
     </div>
     """
     
@@ -2154,6 +2282,9 @@ def get_ui_texts(language="english"):
 
 def get_hint_ui_texts(language="english"):
     return HINT_UI_TEXTS.get(language, HINT_UI_TEXTS["english"])
+
+def get_ai_ui_texts(language="english"):
+    return AI_UI_TEXTS.get(language, AI_UI_TEXTS["english"])
 
 def get_config_ui_texts(config=None):
     cfg = config or {}
@@ -2905,7 +3036,7 @@ def setup_config_menu():
         ui = get_config_ui_texts(config)
         
         # Interface simple pour la configuration
-        from aqt.qt import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QTextEdit, QApplication, QScrollArea
+        from aqt.qt import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QTextEdit, QApplication, QScrollArea, QAbstractSpinBox
         
         dialog = QDialog(mw)
         dialog.setWindowTitle(ui["window_title"])
@@ -2969,8 +3100,18 @@ def setup_config_menu():
         tokens_layout = QHBoxLayout()
         tokens_layout.addWidget(QLabel(ui["max_tokens"]))
         tokens_spin = QSpinBox()
-        tokens_spin.setRange(300, 4000)
-        tokens_spin.setValue(max(config.get("max_tokens", 300), 300))
+        tokens_spin.setRange(100, 16000)
+        tokens_spin.setSingleStep(100)
+        tokens_spin.setAccelerated(True)
+        tokens_spin.setKeyboardTracking(False)
+        tokens_spin.setReadOnly(False)
+        tokens_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
+        tokens_spin.setCorrectionMode(QAbstractSpinBox.CorrectionMode.CorrectToNearestValue)
+        try:
+            tokens_spin.lineEdit().setReadOnly(False)
+        except Exception:
+            pass
+        tokens_spin.setValue(min(max(config.get("max_tokens", 300), 100), 16000))
         tokens_layout.addWidget(tokens_spin)
         general_group.addLayout(tokens_layout)
         feedback_length_help = QLabel(ui.get("feedback_length_help", "Lower = shorter, faster feedback."))
@@ -3349,8 +3490,10 @@ def setup_config_menu():
     action.triggered.connect(open_config)
 
 # Commande pour rafraîchir l'analyse IA
-def refresh_ai_analysis():
+def refresh_ai_analysis(request_identity=None):
     """Rafraîchit l'affichage de l'analyse IA"""
+    if refresh_current_ai_analysis_panel(request_identity):
+        return
     if hasattr(mw, 'reviewer') and mw.reviewer and hasattr(mw.reviewer, 'card') and mw.reviewer.card:
         if hasattr(mw.reviewer, '_showAnswer'):
             mw.reviewer._showAnswer()
