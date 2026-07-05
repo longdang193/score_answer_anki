@@ -817,16 +817,30 @@ textarea#typeans:focus,
 from aqt import gui_hooks
 gui_hooks.webview_will_set_content.append(inject_multiline_type_input)
 
-def _code_compare_block(expected: str, provided: str, lang_hint: str, labels: dict) -> str:
-    exp_text = extract_code_text(expected)
+def _build_compare_variant_chip_list(variants: list[str]) -> str:
+    if not variants:
+        return ""
+    chips = "".join(
+        f'<span class="sqv-choice-chip">{html.escape(variant)}</span>'
+        for variant in variants
+        if variant
+    )
+    if not chips:
+        return ""
+    return f'<div class="sqv-choice-list">{chips}</div>'
+
+def _code_compare_block(expected: str, provided: str, lang_hint: str, labels: dict, expected_alternatives: list[str] | None = None) -> str:
+    exp_text = expected or ""
     prov_text = extract_code_text(provided)
     le = labels.get("expected", "Expected")
     lp = labels.get("provided", "Your answer")
+    expected_variant_list = _build_compare_variant_chip_list(expected_alternatives or [])
     return f"""
     <div class="ak-compare" style="display:flex; gap:12px; margin:12px 0;">
       <div style="flex:1; min-width:0;">
         <div class="ak-label">{html.escape(le)}</div>
         <pre class="ak-pre"><code class="language-{lang_hint}">{html.escape(exp_text)}</code></pre>
+        {expected_variant_list}
       </div>
       <div style="flex:1; min-width:0;">
         <div class="ak-label">{html.escape(lp)}</div>
@@ -1675,6 +1689,33 @@ def build_accepted_answer_pool(card) -> tuple[str, list[str]]:
     ])
     return canonical_answer, accepted_answers
 
+def _normalize_expected_compare_text(value: str) -> str:
+    return extract_code_text(value).strip()
+
+def build_expected_display_model(card, expected_text: str) -> dict:
+    primary_expected = _normalize_expected_compare_text(expected_text)
+    if not card:
+        return {
+            "primary_expected": primary_expected,
+            "alternative_expected_answers": [],
+        }
+
+    canonical_answer, accepted_answers = build_accepted_answer_pool(card)
+    primary_expected = _normalize_expected_compare_text(canonical_answer or expected_text)
+    seen = {primary_expected} if primary_expected else set()
+    alternatives = []
+    for answer in accepted_answers:
+        normalized = _normalize_expected_compare_text(answer)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        alternatives.append(normalized)
+
+    return {
+        "primary_expected": primary_expected,
+        "alternative_expected_answers": alternatives,
+    }
+
 def _is_plain_text_variant(value: str) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
@@ -1956,7 +1997,14 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     </div>
     """ if show_anki else ""
 
-    code_block = _code_compare_block(initial_expected, initial_provided, lang_hint="", labels=labels) if show_code else ""
+    expected_display = build_expected_display_model(card, initial_expected)
+    code_block = _code_compare_block(
+        expected_display["primary_expected"],
+        initial_provided,
+        lang_hint="",
+        labels=labels,
+        expected_alternatives=expected_display["alternative_expected_answers"],
+    ) if show_code else ""
         
     # Affichage simplifié des résultats
     enhanced_output = f"""

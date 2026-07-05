@@ -376,6 +376,29 @@ def main():
     assert "--aqi-score-bg:" not in perfect_rendered
     assert "Perfect." in perfect_rendered
 
+    alt_card = DummyCard(model_name="card_1", template_name="card_1_score")
+    alt_card.note()["Front"] = "What is your name?"
+    alt_card.note()["Back"] = "My name is Long"
+    alt_card.note()["Back_variants"] = "I'm Long;;Long is my name"
+    alt_card.question = lambda: "What is your name? [[type:Back]]"
+    mw.reviewer.card = alt_card
+    alt_cache_key = addon.build_analysis_cache_key("What is your name?", "My name is Long", "Long")
+    addon.analysis_results[alt_cache_key] = {
+        "scored": True,
+        "score": 4,
+        "tips": "Too short.",
+        "sample_answers": ["Sample only answer"],
+    }
+    alt_rendered = addon.render_enhanced_comparison("<div>anki compare</div>", "My name is Long", "Long", "[[type:Back]]")
+    assert "My name is Long" in alt_rendered
+    assert "I&#x27;m Long" in alt_rendered
+    assert "Long is my name" in alt_rendered
+    panel_start = alt_rendered.index("aqi-analysis-panel-wrap")
+    assert alt_rendered.index("I&#x27;m Long") < panel_start
+    assert alt_rendered.index("Long is my name") < panel_start
+    assert alt_rendered.index("Sample only answer") > panel_start
+
+    mw.reviewer.card = DummyCard()
     payload = addon.build_analysis_prompt_payload(mw.reviewer.card, "17")
     assert payload["question_text"] == "13 * 17 = ?"
     assert payload["canonical_answer"] == "221"

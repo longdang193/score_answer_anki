@@ -128,6 +128,26 @@ def main():
     assert canonical_answer == "221"
     assert answer_pool == ["221", "two hundred twenty-one", "221.0"]
 
+    dup_card = DummyCard(
+        card_id=9,
+        note_fields={
+            "Front": "13 * 17 = ?",
+            "Front_variants": "17 * 13 = ?",
+            "Back": "221",
+            "Back_variants": "two hundred twenty-one;; ;;221.0;;two hundred twenty-one",
+        },
+    )
+    dup_canonical_answer, dup_answer_pool = addon.build_accepted_answer_pool(dup_card)
+    assert dup_canonical_answer == "221"
+    assert dup_answer_pool == ["221", "two hundred twenty-one", "221.0"]
+
+    assert hasattr(addon, "build_expected_display_model")
+    primary_only_model = addon.build_expected_display_model(None, "221")
+    assert primary_only_model == {
+        "primary_expected": "221",
+        "alternative_expected_answers": [],
+    }
+
     assert addon.evaluate_question_variant_compatibility("13 * 17 = ?", canonical_answer, answer_pool) == "compatible"
     assert addon.evaluate_question_variant_compatibility("17 * 13 = ?", canonical_answer, answer_pool) == "compatible"
     assert addon.evaluate_question_variant_compatibility("221 = 13 * ?", canonical_answer, answer_pool) == "incompatible"
