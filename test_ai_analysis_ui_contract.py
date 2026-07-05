@@ -257,6 +257,25 @@ def main():
     assert "communicative adequacy" in speaking_prompt.lower()
     assert "alternative valid responses" in speaking_prompt.lower()
 
+    assert r"\(" in addon.get_language_lock_instruction("english")
+    assert "Do not use $...$" in addon.get_language_lock_instruction("english")
+
+    assert "Escape backslashes" in addon.get_language_lock_instruction("english")
+
+    addon.save_config({
+        "enabled": True,
+        "prompt_profile": "default",
+        "language": "english",
+        "provider": "openai",
+        "openai_api_key": "token",
+        "openai_model": "gpt-4.1-mini",
+    })
+    addon.call_ai_api = lambda **kwargs: '{\n  "score": 0,\n  "tips": "Incorrect answer. Solve \\(x^2 = 4\\)."\n}'
+    parsed_math_json = addon.analyze_answer_with_ai("x^2 + 1 = 5", "2", ["2"], "3")
+    assert parsed_math_json["score"] == 0
+    assert parsed_math_json["tips"] == "Incorrect answer. Solve \\(x^2 = 4\\)."
+    assert "score" not in parsed_math_json["tips"]
+
     custom_system, custom_prompt = addon.build_prompt_profile_content(
         {
             "prompt_profile": "custom",
@@ -487,6 +506,52 @@ def main():
     assert regen_hint["status"] == "ready"
     assert len(api_calls) == 2
     assert addon.current_hint_context["question_text"] == "13 * 17 = ?"
+
+    rich_hint_html = addon.render_ai_rich_text("Use **bold** and *italic* and `code`")
+    assert "<strong>bold</strong>" in rich_hint_html
+    assert "<em>italic</em>" in rich_hint_html
+
+    arithmetic_html = addon.render_ai_rich_text("Wrong result. 17 * 13 * 1 = 221")
+    assert "17 * 13 * 1 = 221" in arithmetic_html
+    assert "<em> 13 </em>" not in arithmetic_html
+    assert "<code>code</code>" in rich_hint_html
+
+    rich_list_html = addon.render_ai_rich_text("- one\n- two")
+    assert "<ul>" in rich_list_html
+    assert "<li>one</li>" in rich_list_html
+    assert "<li>two</li>" in rich_list_html
+
+    rich_code_block_html = addon.render_ai_rich_text("```\nprint(1)\n```")
+    assert "<pre" in rich_code_block_html
+    assert "<code>print(1)</code>" in rich_code_block_html
+
+    math_html = addon.render_ai_rich_text(r"Formula \(x^2+y^2\)")
+    assert r"\(x^2+y^2\)" in math_html
+
+    hostile_html = addon.render_ai_rich_text("<script>alert(1)</script><b>hi</b>")
+    assert "<script>" not in hostile_html
+    assert "&lt;script&gt;" in hostile_html
+
+    fallback_html = addon.render_ai_rich_text(None)
+    assert isinstance(fallback_html, str)
+
+    unavailable_hint_context = addon.build_front_hint_context(template_score_card)
+    unavailable_hint_key = unavailable_hint_context["cache_key"]
+    addon.front_hint_panel_state.update({"cache_key": unavailable_hint_key, "is_open": True})
+    addon.hint_cache[unavailable_hint_key] = {"status": "unavailable", "hint_text": "", "error_text": "Use **safe** fallback"}
+    unavailable_hint_rendered = addon.build_front_hint_panel_html(template_score_card, template_score_card.question(), "Question")
+    assert "<strong>safe</strong>" in unavailable_hint_rendered or "Use **safe** fallback" in unavailable_hint_rendered
+
+    unavailable_analysis_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "17")
+    addon.analysis_results[unavailable_analysis_key] = {"status": "unavailable", "scored": False, "score": None, "tips": "Use **safe** fallback"}
+    unavailable_analysis_rendered = addon.build_ai_analysis_panel_html(unavailable_analysis_key, "english")
+    assert "<strong>safe</strong>" in unavailable_analysis_rendered or "Use **safe** fallback" in unavailable_analysis_rendered
+
+    addon.refresh_front_hint_panel_dom("<div id='aqi-front-hint-body'>patched</div>")
+    assert "aqi-front-hint-body" in mw.reviewer.web.commands[-1]
+    addon.refresh_ai_analysis_panel_dom("<div class='aqi-analysis-panel-wrap'>patched</div>")
+    assert "aqi-analysis-panel-wrap" in mw.reviewer.web.commands[-1]
+    assert "MathJax" in mw.reviewer.web.commands[-1] or "typeset" in mw.reviewer.web.commands[-1]
 
 
 if __name__ == "__main__":

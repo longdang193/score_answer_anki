@@ -517,32 +517,17 @@ body.nightMode, body.night-mode, .nightMode, .night-mode, .isDark, [data-theme="
   font-style: italic;
 }
 
-.sqv-active-question {
-  font-family: var(--aqi-font-body) !important;
-  color: var(--sqv-question-fg) !important;
-  text-shadow: var(--sqv-question-shadow);
-}
-
 .sqv-question-block {
   margin: 0 auto 18px auto;
   max-width: 780px;
-  text-align: center;
-}
-
-.sqv-choice-list,
-.sqv-active-question {
-  margin-left: auto;
-  margin-right: auto;
 }
 
 .sqv-active-question {
-  font-size: clamp(28px, 5vw, 36px);
-  font-weight: 800;
-  line-height: 1.25;
   margin-bottom: 10px;
 }
 
 .sqv-choice-list {
+  text-align: center;
   font-size: 13px;
   line-height: 1.5;
   color: var(--sqv-question-muted) !important;
@@ -754,6 +739,37 @@ textarea#typeans:focus,
   line-height: 1.45;
   font-size: clamp(14px, 4vw, 16px);
   text-wrap: pretty;
+}
+
+.aqi-rich-copy > :first-child {
+  margin-top: 0;
+}
+
+.aqi-rich-copy > :last-child {
+  margin-bottom: 0;
+}
+
+.aqi-rich-copy p,
+.aqi-rich-copy ul,
+.aqi-rich-copy ol,
+.aqi-rich-copy pre {
+  margin: 0 0 10px 0;
+}
+
+.aqi-rich-copy ul,
+.aqi-rich-copy ol {
+  padding-left: 22px;
+}
+
+.aqi-rich-copy code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.aqi-rich-copy pre {
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.08);
 }
 </style>
 <script>
@@ -1172,6 +1188,126 @@ def build_hint_prompt(context_data: dict, config=None) -> tuple[str, str]:
     prompt += f"\n\nReturn only one concise hint in {get_language_name(language)}. Do not reveal the full answer."
     return resolved["system_prompt"], prompt
 
+def escape_ai_source_text(text) -> str:
+    return html.escape(str(text or ""), quote=False)
+
+
+def _restore_ai_tokens(text: str, tokens: list[str], marker: str) -> str:
+    for idx, value in enumerate(tokens):
+        text = text.replace(marker.format(idx), value)
+    return text
+
+
+def render_ai_inline_markup(text: str) -> str:
+    if not text:
+        return ""
+    code_tokens: list[str] = []
+    marker = "@@AQI_CODE_{}@@"
+
+    def capture_code(match):
+        code_tokens.append(f"<code>{match.group(1)}</code>")
+        return marker.format(len(code_tokens) - 1)
+
+    rendered = re.sub(r'`([^`\n]+)`', capture_code, text)
+    rendered = re.sub(r'\*\*([^*\n][\s\S]*?[^*\n]|[^*\n])\*\*', r'<strong>\1</strong>', rendered)
+    rendered = re.sub(r'(?<!\*)\*([^\s*](?:[^*\n]*?[^\s*])?)\*(?!\*)', r'<em>\1</em>', rendered)
+    rendered = _restore_ai_tokens(rendered, code_tokens, marker)
+    return rendered
+
+
+def render_ai_markdown_subset(text: str) -> str:
+    escaped = escape_ai_source_text(text).replace("\r\n", "\n").replace("\r", "\n")
+    if not escaped.strip():
+        return ""
+    lines = escaped.split("\n")
+    parts: list[str] = []
+    idx = 0
+
+    def is_unordered(line: str) -> bool:
+        return bool(re.match(r'^\s*[-*]\s+.+$', line))
+
+    def is_ordered(line: str) -> bool:
+        return bool(re.match(r'^\s*\d+\.\s+.+$', line))
+
+    while idx < len(lines):
+        line = lines[idx]
+        stripped = line.strip()
+        if not stripped:
+            idx += 1
+            continue
+        if stripped.startswith("```"):
+            idx += 1
+            code_lines: list[str] = []
+            while idx < len(lines) and not lines[idx].strip().startswith("```"):
+                code_lines.append(lines[idx])
+                idx += 1
+            if idx < len(lines) and lines[idx].strip().startswith("```"):
+                idx += 1
+            code_text = "\n".join(code_lines).strip("\n")
+            parts.append(f'<pre class="aqi-rich-pre"><code>{code_text}</code></pre>')
+            continue
+        if is_unordered(line):
+            items: list[str] = []
+            while idx < len(lines) and is_unordered(lines[idx]):
+                item = re.sub(r'^\s*[-*]\s+', '', lines[idx]).strip()
+                items.append(f'<li>{render_ai_inline_markup(item)}</li>')
+                idx += 1
+            parts.append('<ul>' + ''.join(items) + '</ul>')
+            continue
+        if is_ordered(line):
+            items: list[str] = []
+            while idx < len(lines) and is_ordered(lines[idx]):
+                item = re.sub(r'^\s*\d+\.\s+', '', lines[idx]).strip()
+                items.append(f'<li>{render_ai_inline_markup(item)}</li>')
+                idx += 1
+            parts.append('<ol>' + ''.join(items) + '</ol>')
+            continue
+        para_lines: list[str] = []
+        while idx < len(lines):
+            current = lines[idx]
+            if not current.strip():
+                break
+            if current.strip().startswith("```") or is_unordered(current) or is_ordered(current):
+                break
+            para_lines.append(render_ai_inline_markup(current.strip()))
+            idx += 1
+        if para_lines:
+            parts.append('<p>' + '<br>'.join(para_lines) + '</p>')
+        else:
+            idx += 1
+    return ''.join(parts)
+
+
+def sanitize_ai_rendered_html(html_text: str) -> str:
+    if not html_text:
+        return ""
+    allowed = {"div", "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li"}
+
+    def replace_tag(match):
+        tag = (match.group(1) or "").lower()
+        return match.group(0) if tag in allowed else html.escape(match.group(0), quote=False)
+
+    return re.sub(r'</?([a-zA-Z0-9]+)(?:\s[^<>]*)?>', replace_tag, html_text)
+
+
+def render_ai_rich_text(text) -> str:
+    try:
+        return sanitize_ai_rendered_html(render_ai_markdown_subset(text))
+    except Exception:
+        return escape_ai_source_text(text)
+
+
+def build_post_refresh_typeset_js() -> str:
+    return (
+        "try{"
+        "if(window.MathJax){"
+        "if(typeof window.MathJax.typesetPromise==='function'){window.MathJax.typesetPromise();}"
+        "else if(typeof window.MathJax.typeset==='function'){window.MathJax.typeset();}"
+        "}"
+        "}catch(e){}"
+    )
+
+
 def build_ai_loading_fragment(language: str = "english", title: str | None = None, body: str | None = None, note: str | None = None) -> str:
     texts = get_ai_ui_texts(language)
     resolved_title = html.escape((title or texts.get("loading_title", "AI in progress...")).strip())
@@ -1213,7 +1349,8 @@ def refresh_dom_fragment(selector: str, fragment_html: str) -> bool:
         "(function(){"
         "var wrap=document.querySelector(" + escaped_selector + ");"
         "if(wrap){wrap.outerHTML=" + escaped_html + ";}"
-        "})();"
+        + build_post_refresh_typeset_js()
+        + "})();"
     )
     web.eval(command)
     return True
@@ -1241,18 +1378,18 @@ def build_front_hint_panel_html(card, rendered_text: str = "", kind: str = "Ques
         ai_state = make_hint_unavailable(availability_reason, language)
 
     status = ai_state.get("status", "idle")
-    ai_hint_text = html.escape((ai_state.get("hint_text", "") or "").strip())
-    ai_error_text = html.escape((ai_state.get("error_text", "") or "").strip())
+    ai_hint_text = (ai_state.get("hint_text", "") or "").strip()
+    ai_error_text = (ai_state.get("error_text", "") or "").strip()
     ai_body = ""
     ai_block = ""
     if status == "loading":
         ai_block = build_ai_loading_fragment(language)
     elif ai_hint_text or ai_error_text:
-        ai_body = ai_hint_text or ai_error_text
+        ai_body = render_ai_rich_text(ai_hint_text or ai_error_text)
     if ai_body:
         ai_block = (
-            f'<p class="aqi-section-copy aqi-front-hint-ai"><strong>{html.escape(texts.get("ai_hint_label", "AI Hint"))}:</strong> '
-            f'<span id="aqi-front-hint-body">{ai_body}</span></p>'
+            f'<div class="aqi-front-hint-ai"><strong>{html.escape(texts.get("ai_hint_label", "AI Hint"))}:</strong>'
+            f'<div id="aqi-front-hint-body" class="aqi-section-copy aqi-rich-copy">{ai_body}</div></div>'
         )
 
     if status == "ready":
@@ -1338,6 +1475,7 @@ def build_ai_analysis_panel_html(cache_key: str, language: str = "english") -> s
         icon="⟳",
     )
     tips = ai_analysis.get('tips', texts.get('no_tips_available', 'No tips available'))
+    rendered_tips = render_ai_rich_text(tips)
     return f"""
     <div class="aqi-analysis-panel-wrap">
         <div class="aqi-panel-card" data-score-tier="{score_tier}">
@@ -1353,9 +1491,9 @@ def build_ai_analysis_panel_html(cache_key: str, language: str = "english") -> s
                 </div>
             </div>
             <div class="aqi-panel-body">
-                <p class="aqi-section-copy">
-                    {tips}
-                </p>
+                <div class="aqi-section-copy aqi-rich-copy">
+                    {rendered_tips}
+                </div>
             </div>
         </div>
     </div>
@@ -2929,8 +3067,16 @@ def get_language_lock_instruction(language_key: str) -> str:
         f'\n\nIMPORTANT OUTPUT LANGUAGE RULES:\n'
         f'- Write "tips" strictly in {lang_name}.\n'
         f'- Do not use another language for "tips".\n'
+        f'- If you include mathematical expressions in "tips", use inline \\( ... \\) or display \\[ ... \\].\n'
+        f'- Escape backslashes in JSON strings for math delimiters: use \\\\( ... \\\\) or \\\\[ ... \\\\] in raw JSON output.\n'
+        f'- Do not use $...$ or $$...$$ for mathematical expressions.\n'
         f'- Return valid JSON only.'
     )
+
+
+def normalize_ai_json_math_delimiters(text: str) -> str:
+    return re.sub(r'(?<!\\)\\([()\[\]])', lambda match: '\\' + match.group(0), text)
+
 
 def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str) -> dict:
     """
@@ -2998,7 +3144,21 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answer
                 clean_response = clean_response[:-3]
             clean_response = clean_response.strip()
             
-            result = json.loads(clean_response)
+            parse_candidates = [clean_response]
+            normalized_response = normalize_ai_json_math_delimiters(clean_response)
+            if normalized_response != clean_response:
+                parse_candidates.append(normalized_response)
+
+            result = None
+            for candidate in parse_candidates:
+                try:
+                    result = json.loads(candidate)
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+            if result is None:
+                raise json.JSONDecodeError("Invalid AI JSON response", clean_response, 0)
             # Valider les champs requis
             if all(key in result for key in ["score", "tips"]):
                 # Valider le score

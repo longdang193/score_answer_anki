@@ -168,6 +168,11 @@ def main():
     assert "--sqv-question-fg" in web_content.head
     assert "--sqv-input-bg" in web_content.head
     assert "#typeans" in web_content.head
+    normalized_head = web_content.head.replace("\r\n", "\n")
+    assert ".sqv-active-question {\n  font-size: clamp(28px, 5vw, 36px);" not in normalized_head
+    assert ".sqv-active-question {\n  font-family: var(--aqi-font-body) !important;" not in normalized_head
+    assert ".sqv-question-block {\n  margin: 0 auto 18px auto;\n  max-width: 780px;\n  text-align: center;" not in normalized_head
+    assert ".sqv-choice-list {\n  text-align: center;" in normalized_head
 
     invalid_card = DummyCard(
         card_id=2,

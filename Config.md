@@ -292,5 +292,9 @@ For issues specific to this add-on, check:
 - Surface: front side only
 - Gate: `_score` template plus supported typed-answer front-side path
 - Manual `Hint` field passes through stored field content
-- AI hint is generated plain text and is not auto-saved
+- AI hint and AI analysis use same bounded rich-format renderer
+- Supported AI formatting: paragraphs, `**bold**`, `*italic*`, inline code, fenced code blocks, ordered/unordered lists, canonical `\(...\)` and `\[...\]` math delimiters
+- Unsupported AI formatting in V1: raw HTML, links, images, tables, blockquotes, `$...$`, `$$...$$`
+- If runtime formula typesetting is unavailable, canonical math delimiters remain visible as safe text
+- AI hint is session-only and is not auto-saved
 - If AI is unavailable, `Suggest Hint` remains visible but disabled with a reason

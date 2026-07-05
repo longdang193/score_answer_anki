@@ -242,4 +242,8 @@ When reporting bugs, include:
 - Runs on front side only for eligible typed `_score` cards
 - Optional `Hint` note field is shown as stored field content
 - `Suggest Hint` uses configured provider and prompt profile, but generated hint is session-only text and is not auto-saved
+- AI hint and AI analysis share same bounded rich-format renderer
+- Supported AI formatting: paragraphs, `**bold**`, `*italic*`, inline code, fenced code blocks, ordered/unordered lists, canonical `\(...\)` and `\[...\]` math delimiters
+- Unsupported AI formatting in V1: raw HTML, links, images, tables, blockquotes, `$...$`, `$$...$$`
+- If runtime formula typesetting is unavailable, canonical math delimiters remain visible as safe text
 - If AI is unavailable, `Suggest Hint` stays visible but disabled with a reason
