@@ -38,13 +38,13 @@ Front-side hint panel lane for `packages/score_answer_anki` only.
 # Branch / Merge Readiness
 
 - [x] Lane branch exists for this closure flow
-- [ ] Worktree is clean enough for merge/push flow
+- [x] Worktree is clean enough for merge/push flow
 - [x] Re-run closure gate after manual verification
 
 # Current Blockers
 
 - [x] Manual Anki evidence captured from user confirmation on 2026-07-05
-- [ ] Worktree still has uncommitted lane changes; merge/push flow must wait for clean branch state
+- [x] Current lane changes are committed on `codex/front-side-hint-panel-closure`; remaining untracked files are outside current lane paths
 
 # Minimal Next Actions
 
