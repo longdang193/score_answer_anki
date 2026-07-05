@@ -24,11 +24,12 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
 - **Multi-provider support**: OpenAI, Gemini, Claude, DeepSeek, Groq, OpenRouter, Custom OpenAI-Compatible
 - **Analysis language control**: choose output language independently of your answer language
 - **Interface language auto mode**: config UI can follow Anki UI language
-- **Custom prompt system**:
+- **Prompt profiles**:
+  - built-in `default`, `strict_stem`, `speaking_flexible`, and `custom`
+  - exact card-template-name overrides via JSON
   - optional custom system prompt
   - optional custom analysis prompt template with variables
-  - reset to language defaults
-  - copy defaults to clipboard
+  - reset/copy actions for selected profile
 - **Custom model IDs**:
   - add your own model IDs in provider tabs
   - persist custom IDs in config
@@ -113,19 +114,26 @@ V1 limits:
 - **Show Anki compare**: toggle native Anki comparison block
 - **Show code compare**: toggle side-by-side extracted text comparison
 
-### Prompt Customization
+### Prompt Profiles
 
-- **Use custom prompt template**:
-  - disabled: fields are read-only and show default placeholders
-  - enabled: fields become editable
-- **Custom system prompt**: optional replacement for default system message
-- **Custom analysis prompt template**: supports:
+- **Default prompt profile**:
+  - `default`: balanced educational feedback
+  - `strict_stem`: precise STEM grading; emphasizes numeric result, sign, unit, and completeness
+  - `speaking_flexible`: speaking-oriented grading; emphasizes communicative adequacy and allows alternative valid responses
+  - `custom`: uses your own prompt text fields
+- **Custom system prompt**: shown only when selected profile is `custom`; stored as one global field
+- **Custom analysis prompt template**: shown only when selected profile is `custom`; stored as one global field; supports:
   - `{question}`
   - `{expected_answer}`
+  - `{accepted_answers}`
   - `{user_answer}`
   - `{language}`
-- **Reset prompts to defaults**: injects default prompts for selected analysis language
-- **Copy default prompts**: copies language-specific defaults to clipboard
+- **Custom hint prompt template**: shown only when selected profile is `custom`; stored as one global field; supports:
+  - `{question}`
+  - `{expected_answer}`
+  - `{hint}`
+  - `{language}`
+- **Reset prompts to defaults**: resets custom fields for `custom` profile using selected analysis language
 
 ### Provider Tabs
 
@@ -226,3 +234,12 @@ When reporting bugs, include:
 - exact error text
 - steps to reproduce
 
+
+
+## Front-side Hint Panel
+
+- Owned by `score_answer_anki`, not by note-template-local hint buttons
+- Runs on front side only for eligible typed `_score` cards
+- Optional `Hint` note field is shown as stored field content
+- `Suggest Hint` uses configured provider and prompt profile, but generated hint is session-only text and is not auto-saved
+- If AI is unavailable, `Suggest Hint` stays visible but disabled with a reason

@@ -8,8 +8,88 @@ from aqt import gui_hooks
 ai_analysis_cache = {}
 is_analyzing = {}
 analysis_results = {}
+hint_cache = {}
+is_generating_hint = {}
 current_analysis_context = {}
+current_hint_context = {}
 active_question_state = {}
+front_hint_panel_state = {}
+HINT_PROMPT_VERSION = "v1"
+
+HINT_UI_TEXTS = {
+    "english": {
+        "hint_toggle": "Hint",
+        "hint_label": "Hint",
+        "ai_hint_label": "AI Hint",
+        "suggest_hint": "Suggest Hint",
+        "suggest_hint_again": "Suggest Again",
+        "hint_loading": "Generating hint...",
+        "hint_unavailable": "AI hint not available",
+    },
+    "french": {
+        "hint_toggle": "Indice",
+        "hint_label": "Indice",
+        "ai_hint_label": "Indice IA",
+        "suggest_hint": "Suggérer un indice",
+        "suggest_hint_again": "Suggérer encore",
+        "hint_loading": "Génération de l'indice...",
+        "hint_unavailable": "Indice IA non disponible",
+    },
+    "spanish": {
+        "hint_toggle": "Pista",
+        "hint_label": "Pista",
+        "ai_hint_label": "Pista IA",
+        "suggest_hint": "Sugerir pista",
+        "suggest_hint_again": "Sugerir otra vez",
+        "hint_loading": "Generando pista...",
+        "hint_unavailable": "Pista IA no disponible",
+    },
+    "german": {
+        "hint_toggle": "Hinweis",
+        "hint_label": "Hinweis",
+        "ai_hint_label": "KI-Hinweis",
+        "suggest_hint": "Hinweis vorschlagen",
+        "suggest_hint_again": "Nochmal vorschlagen",
+        "hint_loading": "Hinweis wird erzeugt...",
+        "hint_unavailable": "KI-Hinweis nicht verfügbar",
+    },
+    "russian": {
+        "hint_toggle": "Подсказка",
+        "hint_label": "Подсказка",
+        "ai_hint_label": "Подсказка ИИ",
+        "suggest_hint": "Предложить подсказку",
+        "suggest_hint_again": "Предложить снова",
+        "hint_loading": "Генерируется подсказка...",
+        "hint_unavailable": "Подсказка ИИ недоступна",
+    },
+    "japanese": {
+        "hint_toggle": "ヒント",
+        "hint_label": "ヒント",
+        "ai_hint_label": "AIヒント",
+        "suggest_hint": "ヒントを提案",
+        "suggest_hint_again": "もう一度提案",
+        "hint_loading": "ヒントを生成中...",
+        "hint_unavailable": "AIヒントは利用できません",
+    },
+    "chinese": {
+        "hint_toggle": "提示",
+        "hint_label": "提示",
+        "ai_hint_label": "AI 提示",
+        "suggest_hint": "生成提示",
+        "suggest_hint_again": "重新生成提示",
+        "hint_loading": "正在生成提示...",
+        "hint_unavailable": "AI 提示不可用",
+    },
+    "korean": {
+        "hint_toggle": "힌트",
+        "hint_label": "힌트",
+        "ai_hint_label": "AI 힌트",
+        "suggest_hint": "힌트 제안",
+        "suggest_hint_again": "다시 제안",
+        "hint_loading": "힌트 생성 중...",
+        "hint_unavailable": "AI 힌트를 사용할 수 없습니다",
+    },
+}
 
 QUESTION_VARIANT_SEPARATOR = ";;"
 QUESTION_FIELD = "Front"
@@ -270,6 +350,8 @@ def inject_multiline_type_input(web_content, context):
   --aqi-copy-strong: #2c3e50;
   --aqi-copy-body: #34495e;
   --aqi-panel-body-bg: rgba(255,255,255,0.7);
+  --aqi-control-bg: rgba(255,255,255,0.78);
+  --aqi-control-border: rgba(0,0,0,0.08);
   --ak-code-bg: #fafafa;
   --ak-code-fg: #1b1b1b;
   --ak-code-border: #ddd;
@@ -282,6 +364,16 @@ def inject_multiline_type_input(web_content, context):
   --sqv-input-bg: #ffffff;
   --sqv-input-fg: #111827;
   --sqv-input-border: #cbd5e1;
+  --aqi-score-na-bg: #f3f4f6;
+  --aqi-score-na-color: #6c757d;
+  --aqi-score-low-bg: #ffebee;
+  --aqi-score-low-color: #f44336;
+  --aqi-score-mid-bg: #fff3e0;
+  --aqi-score-mid-color: #ff9800;
+  --aqi-score-high-bg: #e8f5e8;
+  --aqi-score-high-color: #4caf50;
+  --aqi-score-excellent-bg: #e3f2fd;
+  --aqi-score-excellent-color: #2196f3;
 }
 
 /* Détection du sombre dans Anki + fallback */
@@ -291,6 +383,8 @@ body.nightMode, body.night-mode, .nightMode, .night-mode, .isDark, [data-theme="
   --aqi-copy-strong: var(--shared-night-text, #f5f5f5);
   --aqi-copy-body: var(--shared-night-muted, #d1d5db);
   --aqi-panel-body-bg: rgba(15,23,42,0.36);
+  --aqi-control-bg: rgba(15,23,42,0.72);
+  --aqi-control-border: rgba(148,163,184,0.28);
   --ak-code-bg: #0f1116;
   --ak-code-fg: #e6edf3;
   --ak-code-border: #2d333b;
@@ -303,6 +397,16 @@ body.nightMode, body.night-mode, .nightMode, .night-mode, .isDark, [data-theme="
   --sqv-input-bg: #111827;
   --sqv-input-fg: #f9fafb;
   --sqv-input-border: #374151;
+  --aqi-score-na-bg: rgba(107,114,128,0.22);
+  --aqi-score-na-color: #cbd5e1;
+  --aqi-score-low-bg: rgba(239,68,68,0.18);
+  --aqi-score-low-color: #fca5a5;
+  --aqi-score-mid-bg: rgba(245,158,11,0.18);
+  --aqi-score-mid-color: #fcd34d;
+  --aqi-score-high-bg: rgba(34,197,94,0.18);
+  --aqi-score-high-color: #86efac;
+  --aqi-score-excellent-bg: rgba(59,130,246,0.18);
+  --aqi-score-excellent-color: #93c5fd;
 }
 
 /* Fallback pour systèmes qui annoncent le thème via le média */
@@ -313,6 +417,8 @@ body.nightMode, body.night-mode, .nightMode, .night-mode, .isDark, [data-theme="
     --aqi-copy-strong: var(--shared-night-text, #f5f5f5);
     --aqi-copy-body: var(--shared-night-muted, #d1d5db);
     --aqi-panel-body-bg: rgba(15,23,42,0.36);
+    --aqi-control-bg: rgba(15,23,42,0.72);
+    --aqi-control-border: rgba(148,163,184,0.28);
     --ak-code-bg: #0f1116;
     --ak-code-fg: #e6edf3;
     --ak-code-border: #2d333b;
@@ -325,6 +431,16 @@ body.nightMode, body.night-mode, .nightMode, .night-mode, .isDark, [data-theme="
     --sqv-input-bg: #111827;
     --sqv-input-fg: #f9fafb;
     --sqv-input-border: #374151;
+    --aqi-score-na-bg: rgba(107,114,128,0.22);
+    --aqi-score-na-color: #cbd5e1;
+    --aqi-score-low-bg: rgba(239,68,68,0.18);
+    --aqi-score-low-color: #fca5a5;
+    --aqi-score-mid-bg: rgba(245,158,11,0.18);
+    --aqi-score-mid-color: #fcd34d;
+    --aqi-score-high-bg: rgba(34,197,94,0.18);
+    --aqi-score-high-color: #86efac;
+    --aqi-score-excellent-bg: rgba(59,130,246,0.18);
+    --aqi-score-excellent-color: #93c5fd;
   }
 }
 
@@ -465,12 +581,34 @@ textarea#typeans:focus,
 }
 
 .aqi-panel-card {
+  --aqi-score-bg: var(--aqi-score-na-bg);
+  --aqi-score-color: var(--aqi-score-na-color);
   border-radius: 16px;
   padding: 16px;
   margin: 16px 0;
   box-shadow: 0 8px 32px rgba(0,0,0,0.1);
   background: var(--aqi-score-bg);
   border: 2px solid var(--aqi-score-color);
+}
+
+.aqi-panel-card[data-score-tier="low"] {
+  --aqi-score-bg: var(--aqi-score-low-bg);
+  --aqi-score-color: var(--aqi-score-low-color);
+}
+
+.aqi-panel-card[data-score-tier="mid"] {
+  --aqi-score-bg: var(--aqi-score-mid-bg);
+  --aqi-score-color: var(--aqi-score-mid-color);
+}
+
+.aqi-panel-card[data-score-tier="high"] {
+  --aqi-score-bg: var(--aqi-score-high-bg);
+  --aqi-score-color: var(--aqi-score-high-color);
+}
+
+.aqi-panel-card[data-score-tier="excellent"] {
+  --aqi-score-bg: var(--aqi-score-excellent-bg);
+  --aqi-score-color: var(--aqi-score-excellent-color);
 }
 
 .aqi-panel-head {
@@ -496,7 +634,7 @@ textarea#typeans:focus,
 }
 
 .aqi-regenerate-btn {
-  background: rgba(255,255,255,0.78);
+  background: var(--aqi-control-bg);
   color: var(--aqi-score-color);
   width: 38px;
   height: 38px;
@@ -505,7 +643,7 @@ textarea#typeans:focus,
   justify-content: center;
   padding: 0;
   border-radius: 999px;
-  border: 1px solid rgba(0,0,0,0.08);
+  border: 1px solid var(--aqi-control-border);
   font-weight: 700;
   font-size: 24px;
   line-height: 1;
@@ -798,6 +936,345 @@ def get_card_template_name(card) -> str:
 def should_score_card(card) -> bool:
     template_name = get_card_template_name(card).strip().lower()
     return template_name.endswith("_score")
+
+
+def resolve_prompt_profile(config) -> str:
+    merged_config = merge_config_with_defaults(config)
+    return normalize_prompt_profile(merged_config.get("prompt_profile")) or PROMPT_PROFILE_DEFAULT
+
+
+def get_manual_hint_html(card) -> str:
+    return (get_note_field(card, "Hint") or "").strip()
+
+
+def is_supported_typed_answer_card(card, rendered_text: str = "", kind: str = "") -> bool:
+    if not card:
+        return False
+    if kind and "Question" not in kind:
+        return False
+    card_question = ""
+    try:
+        card_question = card.question() or ""
+    except Exception:
+        card_question = ""
+    rendered_text = rendered_text or ""
+    return "[[type:" in card_question or 'id="typeans"' in rendered_text or "id='typeans'" in rendered_text
+
+
+def is_front_hint_eligible(card, rendered_text: str = "", kind: str = "Question") -> bool:
+    return bool(card) and should_score_card(card) and is_supported_typed_answer_card(card, rendered_text, kind)
+
+
+def build_hint_cache_key(*, card_id, card_ord, question_text: str, canonical_answer: str, manual_hint: str, language: str, prompt_profile: str, hint_prompt_version: str) -> str:
+    return "_".join(
+        [
+            str(card_id),
+            str(card_ord),
+            str(hash(question_text or "")),
+            str(hash(canonical_answer or "")),
+            str(hash(manual_hint or "")),
+            str(hash(language or "")),
+            str(hash(prompt_profile or "")),
+            str(hash(hint_prompt_version or "")),
+        ]
+    )
+
+
+def invalidate_hint_state(cache_key: str) -> None:
+    hint_cache.pop(cache_key, None)
+    is_generating_hint.pop(cache_key, None)
+    if current_hint_context.get("cache_key") == cache_key:
+        current_hint_context.clear()
+    if front_hint_panel_state.get("cache_key") == cache_key:
+        front_hint_panel_state.clear()
+
+
+def reset_hint_state() -> None:
+    hint_cache.clear()
+    is_generating_hint.clear()
+    current_hint_context.clear()
+    front_hint_panel_state.clear()
+
+
+def build_front_hint_context(card, rendered_text: str = "", kind: str = "Question") -> dict[str, str | int | None]:
+    canonical_answer, _accepted_answers = build_accepted_answer_pool(card)
+    question_text = get_active_visible_question(card)
+    manual_hint = get_manual_hint_html(card)
+    config = get_config()
+    prompt_profile = resolve_prompt_profile(config)
+    return {
+        "card_id": getattr(card, "id", None),
+        "card_ord": getattr(card, "ord", None),
+        "question_text": question_text,
+        "canonical_answer": canonical_answer,
+        "manual_hint": manual_hint,
+        "language": config.get("language", "english"),
+        "prompt_profile": prompt_profile,
+        "hint_prompt_version": HINT_PROMPT_VERSION,
+        "cache_key": build_hint_cache_key(
+            card_id=getattr(card, "id", None),
+            card_ord=getattr(card, "ord", None),
+            question_text=question_text,
+            canonical_answer=canonical_answer,
+            manual_hint=manual_hint,
+            language=config.get("language", "english"),
+            prompt_profile=prompt_profile,
+            hint_prompt_version=HINT_PROMPT_VERSION,
+        ),
+    }
+
+
+def get_hint_availability_reason(config=None, language: str = "english") -> str:
+    merged_config = merge_config_with_defaults(config)
+    if not merged_config.get("enabled", True):
+        return "AI disabled"
+    provider = merged_config.get("provider", "openai")
+    model = (merged_config.get(f"{provider}_model", get_provider_default_model(provider)) or "").strip()
+    api_key = (merged_config.get(f"{provider}_api_key", "") or "").strip()
+    if provider == CUSTOM_OPENAI_PROVIDER:
+        base_url = (merged_config.get(f"{provider}_base_url", "") or "").strip()
+        if not base_url:
+            return "Custom OpenAI base URL not configured"
+        if not model:
+            return "Custom OpenAI model not configured"
+        return ""
+    if not api_key:
+        provider_name = PROVIDERS.get(provider, {}).get("name", provider)
+        return f"{provider_name} API key not configured"
+    return ""
+
+def make_hint_unavailable(reason: str, language: str = "english") -> dict:
+    texts = get_hint_ui_texts(language)
+    base = texts.get("hint_unavailable", "AI hint not available")
+    reason = (reason or "").strip()
+    error_text = f"{base}: {reason}" if reason else base
+    return {
+        "status": "unavailable",
+        "hint_text": "",
+        "error_text": error_text,
+    }
+
+def normalize_hint_result(result, language: str = "english") -> dict:
+    if isinstance(result, dict):
+        status = result.get("status") or "ready"
+        hint_text = (result.get("hint_text", "") or "").strip()
+        error_text = (result.get("error_text", "") or "").strip()
+        if status == "loading":
+            return {"status": "loading", "hint_text": "", "error_text": ""}
+        if status == "unavailable":
+            return {"status": "unavailable", "hint_text": "", "error_text": error_text or make_hint_unavailable("", language)["error_text"]}
+        if hint_text:
+            return {"status": "ready", "hint_text": hint_text, "error_text": ""}
+        return make_hint_unavailable(error_text or "Empty AI response", language)
+    hint_text = str(result or "").strip()
+    if hint_text.startswith("```"):
+        hint_text = hint_text.strip("`").strip()
+        if hint_text.lower().startswith("json"):
+            hint_text = hint_text[4:].strip()
+    if not hint_text:
+        return make_hint_unavailable("Empty AI response", language)
+    return {"status": "ready", "hint_text": hint_text, "error_text": ""}
+
+def build_hint_prompt(context_data: dict, config=None) -> tuple[str, str]:
+    merged_config = merge_config_with_defaults(config)
+    language = context_data.get("language", merged_config.get("language", "english"))
+    resolved = resolve_prompt_profile_content(merged_config, language, context_data.get("prompt_profile", PROMPT_PROFILE_DEFAULT))
+    prompt = render_prompt_template(
+        resolved["hint_prompt_template"],
+        language,
+        context_data.get("question_text", ""),
+        context_data.get("canonical_answer", ""),
+        [],
+        "",
+        clean_html_content(context_data.get("manual_hint", "")),
+    )
+    prompt += f"\n\nReturn only one concise hint in {get_language_name(language)}. Do not reveal the full answer."
+    return resolved["system_prompt"], prompt
+
+def build_front_hint_panel_html(card, rendered_text: str = "", kind: str = "Question") -> str:
+    if not kind or "Question" not in kind:
+        return ""
+    if not is_front_hint_eligible(card, rendered_text, kind):
+        return ""
+
+    context = build_front_hint_context(card, rendered_text, kind)
+    cache_key = context["cache_key"]
+    current_hint_context.update(context)
+    is_open = bool(front_hint_panel_state.get("is_open")) and front_hint_panel_state.get("cache_key") == cache_key
+    front_hint_panel_state.update({"cache_key": cache_key, "is_open": is_open})
+
+    config = get_config()
+    language = context.get("language", config.get("language", "english"))
+    texts = get_hint_ui_texts(language)
+    availability_reason = get_hint_availability_reason(config, language)
+    manual_hint_html = context["manual_hint"]
+    ai_state = dict(hint_cache.get(cache_key, {}) or {})
+    if not ai_state and availability_reason:
+        ai_state = make_hint_unavailable(availability_reason, language)
+
+    status = ai_state.get("status", "idle")
+    ai_hint_text = html.escape((ai_state.get("hint_text", "") or "").strip())
+    ai_error_text = html.escape((ai_state.get("error_text", "") or "").strip())
+    ai_body = ""
+    if status == "loading":
+        ai_body = html.escape(texts.get("hint_loading", "Generating hint..."))
+    elif ai_hint_text or ai_error_text:
+        ai_body = ai_hint_text or ai_error_text
+    ai_block = ""
+    if ai_body:
+        ai_block = (
+            f'<div class="aqi-front-hint-section"><div class="aqi-front-hint-label">{html.escape(texts.get("ai_hint_label", "AI Hint"))}</div>'
+            f'<div id="aqi-front-hint-body">{ai_body}</div></div>'
+        )
+
+    if status == "ready":
+        button_label = texts.get("suggest_hint_again", "Suggest Again")
+        action_message = "regenerate_ai_hint"
+    else:
+        button_label = texts.get("suggest_hint", "Suggest Hint")
+        action_message = "suggest_ai_hint"
+    button_disabled = bool(availability_reason) or status == "loading"
+    button_attrs = ' disabled aria-disabled="true"' if button_disabled else ""
+    if availability_reason:
+        button_attrs += f' title="{html.escape(make_hint_unavailable(availability_reason, language)["error_text"])}"'
+    panel_style = "" if is_open else "display:none;"
+    manual_block = ""
+    if manual_hint_html:
+        manual_block = (
+            f'<div class="aqi-front-hint-section"><div class="aqi-front-hint-label">{html.escape(texts.get("hint_label", "Hint"))}</div>'
+            f'<div class="aqi-front-manual-hint">{manual_hint_html}</div></div>'
+        )
+    return (
+        '<div class="aqi-front-hint-wrap">'
+        f'<button class="aqi-front-hint-toggle" type="button" onclick="if (typeof pycmd === \'function\') pycmd(\'toggle_hint_panel\'); return false;">{html.escape(texts.get("hint_toggle", "Hint"))}</button>'
+        f'<div id="aqi-front-hint-panel" style="{panel_style}">'
+        f'{manual_block}'
+        f'{ai_block}'
+        '<div id="aqi-front-hint-actions">'
+        f'<button class="aqi-front-hint-action" type="button"{button_attrs} onclick="if (typeof pycmd === \'function\') pycmd(\'{action_message}\'); return false;">{html.escape(button_label)}</button>'
+        '</div>'
+        '</div>'
+        '</div>'
+    )
+
+def refresh_current_front_hint_panel(cache_key: str | None = None) -> None:
+    reviewer = getattr(mw, "reviewer", None)
+    card = getattr(reviewer, "card", None)
+    if not card:
+        return
+    rendered_text = ""
+    try:
+        rendered_text = card.question() or ""
+    except Exception:
+        rendered_text = ""
+    panel_html = build_front_hint_panel_html(card, rendered_text, "Question")
+    if not panel_html:
+        return
+    if cache_key and current_hint_context.get("cache_key") != cache_key:
+        return
+    refresh_front_hint_panel_dom(panel_html)
+
+def refresh_front_hint_panel_dom(panel_html: str) -> None:
+    reviewer = getattr(mw, "reviewer", None)
+    web = getattr(reviewer, "web", None)
+    if not web or not hasattr(web, "eval"):
+        return
+    escaped_html = json.dumps(panel_html)
+    command = (
+        "(function(){"
+        "var wrap=document.querySelector('.aqi-front-hint-wrap');"
+        "if(wrap){wrap.outerHTML=" + escaped_html + ";}"
+        "})();"
+    )
+    web.eval(command)
+
+def suggest_ai_hint() -> dict:
+    reviewer = getattr(mw, "reviewer", None)
+    card = getattr(reviewer, "card", None)
+    config = get_config()
+    language = config.get("language", "english")
+    if not is_front_hint_eligible(card, "", "Question"):
+        return make_hint_unavailable("Hint unavailable for this card", language)
+
+    context_data = build_front_hint_context(card)
+    cache_key = context_data["cache_key"]
+    current_hint_context.update(context_data)
+    front_hint_panel_state.update({"cache_key": cache_key, "is_open": True})
+
+    cached = hint_cache.get(cache_key)
+    if cached and cached.get("status") == "ready":
+        refresh_current_front_hint_panel(cache_key)
+        return cached
+
+    if is_generating_hint.get(cache_key, False):
+        refresh_current_front_hint_panel(cache_key)
+        return hint_cache.get(cache_key, {"status": "loading", "hint_text": "", "error_text": ""})
+
+    availability_reason = get_hint_availability_reason(config, language)
+    if availability_reason:
+        result = make_hint_unavailable(availability_reason, language)
+        hint_cache[cache_key] = result
+        refresh_current_front_hint_panel(cache_key)
+        return result
+
+    provider = config.get("provider", "openai")
+    model = (config.get(f"{provider}_model", get_provider_default_model(provider)) or "").strip()
+    api_key = (config.get(f"{provider}_api_key", "") or "").strip()
+    base_url = (config.get(f"{provider}_base_url", "") or "").strip()
+    system_message, prompt = build_hint_prompt(context_data, config)
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": prompt},
+    ]
+
+    hint_cache[cache_key] = {"status": "loading", "hint_text": "", "error_text": ""}
+    is_generating_hint[cache_key] = True
+    refresh_current_front_hint_panel(cache_key)
+
+    def task():
+        return normalize_hint_result(
+            call_ai_api(
+                messages=messages,
+                provider=provider,
+                model=model,
+                max_tokens=config.get("max_tokens", 200),
+                temperature=config.get("temperature", 0.7),
+                api_key=api_key,
+                base_url=base_url,
+            ),
+            language,
+        )
+
+    def on_done(fut):
+        try:
+            result = normalize_hint_result(fut.result(), language)
+        except Exception as exc:
+            provider_name = PROVIDERS.get(provider, {}).get("name", provider)
+            result = make_hint_unavailable(f"{provider_name}: {exc}", language)
+        finally:
+            is_generating_hint[cache_key] = False
+        hint_cache[cache_key] = result
+        refresh_current_front_hint_panel(cache_key)
+
+    mw.taskman.run_in_background(task, on_done)
+    return hint_cache[cache_key]
+
+def regenerate_ai_hint() -> dict:
+    reviewer = getattr(mw, "reviewer", None)
+    card = getattr(reviewer, "card", None)
+    if not card:
+        return make_hint_unavailable("Hint unavailable for this card", get_config().get("language", "english"))
+    context_data = build_front_hint_context(card)
+    invalidate_hint_state(context_data["cache_key"])
+    current_hint_context.update(context_data)
+    front_hint_panel_state.update({"cache_key": context_data["cache_key"], "is_open": True})
+    return suggest_ai_hint()
+
+def render_front_hint_panel(text: str, card, kind: str) -> str:
+    panel_html = build_front_hint_panel_html(card, text, kind)
+    if not panel_html:
+        return text
+    return text + panel_html
 
 def get_raw_front_field(card) -> str:
     return get_note_field(card, QUESTION_FIELD)
@@ -1144,23 +1621,8 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     
     is_scored = bool(ai_analysis.get("scored", True)) and isinstance(ai_analysis.get("score"), int)
 
-    # Déterminer les couleurs selon le score
     score = ai_analysis.get('score', 5) if is_scored else None
-    if not is_scored:
-        score_color = "#6c757d"
-        score_bg = "#f3f4f6"
-    elif score <= 3:
-        score_color = "#f44336"  # Rouge
-        score_bg = "#ffebee"
-    elif score <= 5:
-        score_color = "#ff9800"  # Orange
-        score_bg = "#fff3e0"
-    elif score <= 8:
-        score_color = "#4caf50"  # Vert
-        score_bg = "#e8f5e8"
-    else:
-        score_color = "#2196f3"  # Bleu
-        score_bg = "#e3f2fd"
+    score_tier = get_score_tier(score, is_scored)
 
     score_badge = f"{score}/10" if is_scored else "N/A"
     regenerate_button = f"""
@@ -1184,7 +1646,7 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
         {anki_section}
         {code_block}
         
-        <div class="aqi-panel-card" style="--aqi-score-bg: {score_bg}; --aqi-score-color: {score_color};">
+        <div class="aqi-panel-card" data-score-tier="{score_tier}">
             
             <div class="aqi-panel-head">
                 <div class="aqi-panel-title-wrap">
@@ -1276,10 +1738,48 @@ DEFAULT_CONFIG = {
     "show_anki_compare": True,
     "show_code_compare": True,
     "ui_language": "auto",  # 'auto' | 'en' | 'fr' | 'es' | 'de' | 'pt' | 'it' | 'ru' | 'ja' | 'zh' | 'ko'
+    "prompt_profile": "default",
     "use_custom_prompt": False,
     "custom_system_prompt": "",
-    "custom_analysis_prompt_template": ""
+    "custom_analysis_prompt_template": "",
+    "custom_hint_prompt_template": ""
 }
+
+PROMPT_PROFILE_DEFAULT = "default"
+PROMPT_PROFILE_STRICT_STEM = "strict_stem"
+PROMPT_PROFILE_SPEAKING_FLEXIBLE = "speaking_flexible"
+PROMPT_PROFILE_CUSTOM = "custom"
+PROMPT_PROFILE_CHOICES = (
+    PROMPT_PROFILE_DEFAULT,
+    PROMPT_PROFILE_STRICT_STEM,
+    PROMPT_PROFILE_SPEAKING_FLEXIBLE,
+    PROMPT_PROFILE_CUSTOM,
+)
+
+
+def normalize_prompt_profile(value) -> str | None:
+    profile = str(value or "").strip()
+    return profile if profile in PROMPT_PROFILE_CHOICES else None
+
+
+def should_show_custom_prompt_fields(profile: str) -> bool:
+    return normalize_prompt_profile(profile) == PROMPT_PROFILE_CUSTOM
+
+
+def build_custom_system_placeholder(ui) -> str:
+    return ui.get("custom_system_placeholder", "If empty, language default system prompt is used.")
+
+
+def get_score_tier(score, is_scored: bool) -> str:
+    if not is_scored:
+        return "na"
+    if score <= 3:
+        return "low"
+    if score <= 5:
+        return "mid"
+    if score <= 8:
+        return "high"
+    return "excellent"
 
 # **MODIFIÉ: Langues supportées avec nouveau texte pour le contexte de question**
 LANGUAGES = {
@@ -1469,7 +1969,6 @@ CONFIG_UI_TEXTS = {
         "custom_analysis_prompt": "Custom analysis prompt template (supports {question}, {expected_answer}, {user_answer}, {language}):",
         "custom_system_placeholder": "If empty, language default system prompt is used.",
         "reset_custom_prompt": "Reset prompts to defaults",
-        "copy_default_prompts": "Copy default prompts",
         "copied_default_prompts": "Default prompts copied to clipboard.",
         "add_model_id": "Add model ID",
         "model_id_placeholder": "provider/model-id",
@@ -1497,7 +1996,6 @@ CONFIG_UI_TEXTS = {
         "custom_analysis_prompt": "Template du prompt d'analyse (variables {question}, {expected_answer}, {user_answer}, {language}) :",
         "custom_system_placeholder": "Si vide, le prompt systeme par defaut de la langue est utilise.",
         "reset_custom_prompt": "Reinitialiser les prompts par defaut",
-        "copy_default_prompts": "Copier les prompts par defaut",
         "copied_default_prompts": "Prompts par defaut copies dans le presse-papiers.",
         "add_model_id": "Ajouter un ID de modele",
         "model_id_placeholder": "provider/model-id",
@@ -1654,6 +2152,9 @@ def get_ui_texts(language="english"):
     """Récupère les textes de l'interface selon la langue"""
     return LANGUAGES.get(language, LANGUAGES["english"])
 
+def get_hint_ui_texts(language="english"):
+    return HINT_UI_TEXTS.get(language, HINT_UI_TEXTS["english"])
+
 def get_config_ui_texts(config=None):
     cfg = config or {}
     sel = str(cfg.get("ui_language", "auto")).lower()
@@ -1666,9 +2167,22 @@ CUSTOM_OPENAI_PROVIDER = "custom_openai"
 
 def merge_config_with_defaults(config):
     merged = dict(DEFAULT_CONFIG)
-    if config:
-        merged.update(config)
+    source_config = config or {}
+    if source_config:
+        merged.update(source_config)
+    merged_prompt_profile = normalize_prompt_profile(source_config.get("prompt_profile"))
+    if merged_prompt_profile is None:
+        merged_prompt_profile = PROMPT_PROFILE_CUSTOM if bool(source_config.get("use_custom_prompt", False)) else PROMPT_PROFILE_DEFAULT
+    merged["prompt_profile"] = merged_prompt_profile
+    merged["use_custom_prompt"] = False
+    merged.pop("template_prompt_profile_overrides", None)
     return merged
+
+
+def build_persisted_config(config):
+    persisted = merge_config_with_defaults(config)
+    persisted.pop("template_prompt_profile_overrides", None)
+    return persisted
 
 
 def get_provider_default_model(provider):
@@ -1789,7 +2303,8 @@ def get_config():
 def save_config(config):
     """Sauvegarde la configuration dans les métadonnées d'Anki"""
     try:
-        mw.addonManager.writeConfig(__name__, config)
+        mw.addonManager.writeConfig(__name__, build_persisted_config(config))
+        reset_hint_state()
     except Exception as e:
         print(f"Error saving config: {e}")
 
@@ -2163,24 +2678,106 @@ def get_system_message_for_language(language):
     }
     return system_messages.get(language, system_messages["english"])
 
-def build_analysis_prompt(config, language, question_text, true_answer, accepted_answers, user_answer):
-    use_custom_prompt = bool(config.get("use_custom_prompt", False))
-    template = (config.get("custom_analysis_prompt_template", "") or "").strip()
 
-    if use_custom_prompt and template:
-        rendered = template
-        replacements = {
-            "{question}": question_text or "",
-            "{expected_answer}": true_answer or "",
-            "{accepted_answers}": _format_accepted_answers_for_prompt(accepted_answers),
-            "{user_answer}": user_answer or "",
-            "{language}": language or "english",
+def render_prompt_template(template: str, language: str, question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str, hint: str = "") -> str:
+    rendered = template
+    replacements = {
+        "{question}": question_text or "",
+        "{expected_answer}": true_answer or "",
+        "{accepted_answers}": _format_accepted_answers_for_prompt(accepted_answers),
+        "{user_answer}": user_answer or "",
+        "{language}": language or "english",
+        "{hint}": hint or "",
+    }
+    for token, value in replacements.items():
+        rendered = rendered.replace(token, value)
+    return rendered
+
+
+
+def resolve_prompt_profile_content(config, language: str, profile_name: str) -> dict[str, str]:
+    merged_config = merge_config_with_defaults(config)
+    normalized_profile = normalize_prompt_profile(profile_name) or PROMPT_PROFILE_DEFAULT
+    base_system = get_system_message_for_language(language)
+    base_analysis_prompt = get_language_specific_prompt(language, "{question}", "{expected_answer}", ["{accepted_answers}"], "{user_answer}")
+
+    default_hint_template = (
+        "Give one concise study hint for the question without revealing the full answer. "
+        "Question: {question}\nExpected answer: {expected_answer}\n"
+        "Existing hint: {hint}\nLanguage: {language}"
+    )
+    strict_stem_hint_template = (
+        "Give one concise STEM-oriented study hint without revealing the full answer. "
+        "Focus on units, sign, setup, or first step. "
+        "Question: {question}\nExpected answer: {expected_answer}\n"
+        "Existing hint: {hint}\nLanguage: {language}"
+    )
+    speaking_flexible_hint_template = (
+        "Give one concise speaking-oriented hint without revealing a full model answer. "
+        "Focus on communicative intent, topic framing, or useful direction. "
+        "Question: {question}\nExpected answer: {expected_answer}\n"
+        "Existing hint: {hint}\nLanguage: {language}"
+    )
+
+    built_in_profiles = {
+        PROMPT_PROFILE_DEFAULT: {
+            "system_prompt": base_system,
+            "analysis_prompt_template": base_analysis_prompt,
+            "hint_prompt_template": default_hint_template,
+        },
+        PROMPT_PROFILE_STRICT_STEM: {
+            "system_prompt": base_system,
+            "analysis_prompt_template": base_analysis_prompt + (
+                "\n\nProfile-specific evaluation rules:\n"
+                "- Treat this as a strict STEM response.\n"
+                "- Require precision for numeric result, sign, and unit.\n"
+                "- Treat materially incomplete answers as wrong.\n"
+                "- Do not accept vague semantic similarity when the factual result is wrong.\n"
+                "- Accept mathematically or scientifically equivalent answers."
+            ),
+            "hint_prompt_template": strict_stem_hint_template,
+        },
+        PROMPT_PROFILE_SPEAKING_FLEXIBLE: {
+            "system_prompt": base_system,
+            "analysis_prompt_template": base_analysis_prompt + (
+                "\n\nProfile-specific evaluation rules:\n"
+                "- Treat the expected answer as an anchor example, not exclusive truth.\n"
+                "- Score communicative adequacy, relevance, grammar, and completeness.\n"
+                "- Allow alternative valid responses that satisfy prompt intent.\n"
+                "- Accept alternative valid responses when meaning is preserved."
+            ),
+            "hint_prompt_template": speaking_flexible_hint_template,
+        },
+    }
+
+    if normalized_profile == PROMPT_PROFILE_CUSTOM:
+        custom_system = (merged_config.get("custom_system_prompt", "") or "").strip() or base_system
+        custom_analysis_template = (merged_config.get("custom_analysis_prompt_template", "") or "").strip() or base_analysis_prompt
+        custom_hint_template = (merged_config.get("custom_hint_prompt_template", "") or "").strip() or default_hint_template
+        return {
+            "system_prompt": custom_system,
+            "analysis_prompt_template": custom_analysis_template,
+            "hint_prompt_template": custom_hint_template,
         }
-        for token, value in replacements.items():
-            rendered = rendered.replace(token, value)
-        return rendered
 
-    return get_language_specific_prompt(language, question_text, true_answer, accepted_answers, user_answer)
+    return built_in_profiles.get(normalized_profile, built_in_profiles[PROMPT_PROFILE_DEFAULT])
+def build_prompt_profile_content(config, language: str, profile: str, question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str) -> tuple[str, str]:
+    resolved = resolve_prompt_profile_content(config, language, profile)
+    rendered_prompt = render_prompt_template(
+        resolved["analysis_prompt_template"],
+        language,
+        question_text,
+        true_answer,
+        accepted_answers,
+        user_answer,
+    )
+    return resolved["system_prompt"], rendered_prompt
+
+def build_analysis_prompt(config, language, question_text, true_answer, accepted_answers, user_answer):
+    card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
+    profile = resolve_prompt_profile(config)
+    _system, prompt = build_prompt_profile_content(config, language, profile, question_text, true_answer, accepted_answers, user_answer)
+    return prompt
 
 def get_language_name(language_key: str) -> str:
     mapping = {
@@ -2231,9 +2828,18 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answer
     elif not api_key:
         return make_analysis_unavailable(f"{PROVIDERS[provider]['name']} API key not configured", language)
     
-    prompt = build_analysis_prompt(config, language, question_text, true_answer, accepted_answers, user_answer) + get_language_lock_instruction(language)
-    custom_system_prompt = (config.get("custom_system_prompt", "") or "").strip()
-    system_message = custom_system_prompt or get_system_message_for_language(language)
+    card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
+    profile = resolve_prompt_profile(config)
+    system_message, prompt = build_prompt_profile_content(
+        config,
+        language,
+        profile,
+        question_text,
+        true_answer,
+        accepted_answers,
+        user_answer,
+    )
+    prompt += get_language_lock_instruction(language)
 
     messages = [
         {"role": "system", "content": system_message},
@@ -2299,14 +2905,18 @@ def setup_config_menu():
         ui = get_config_ui_texts(config)
         
         # Interface simple pour la configuration
-        from aqt.qt import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QTextEdit, QApplication
+        from aqt.qt import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QTextEdit, QApplication, QScrollArea
         
         dialog = QDialog(mw)
         dialog.setWindowTitle(ui["window_title"])
         dialog.setMinimumWidth(550)
         dialog.setMinimumHeight(700)
-        
-        layout = QVBoxLayout()
+
+        root_layout = QVBoxLayout()
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         
         # Paramètres généraux en haut
         general_group = QVBoxLayout()
@@ -2378,9 +2988,21 @@ def setup_config_menu():
         temp_layout.addWidget(temp_spin)
         general_group.addLayout(temp_layout)
 
-        use_custom_prompt_chk = QCheckBox(ui["use_custom_prompt"])
-        use_custom_prompt_chk.setChecked(config.get("use_custom_prompt", False))
-        general_group.addWidget(use_custom_prompt_chk)
+        prompt_profile_layout = QHBoxLayout()
+        prompt_profile_layout.addWidget(QLabel(ui.get("prompt_profile", "Default prompt profile")))
+        prompt_profile_combo = QComboBox()
+        prompt_profile_options = [
+            ("Default", PROMPT_PROFILE_DEFAULT),
+            ("Strict STEM", PROMPT_PROFILE_STRICT_STEM),
+            ("Speaking Flexible", PROMPT_PROFILE_SPEAKING_FLEXIBLE),
+            ("Custom", PROMPT_PROFILE_CUSTOM),
+        ]
+        for label, value in prompt_profile_options:
+            prompt_profile_combo.addItem(label, value)
+        current_prompt_profile = normalize_prompt_profile(config.get("prompt_profile")) or PROMPT_PROFILE_DEFAULT
+        prompt_profile_combo.setCurrentIndex(next((idx for idx, (_label, value) in enumerate(prompt_profile_options) if value == current_prompt_profile), 0))
+        prompt_profile_layout.addWidget(prompt_profile_combo)
+        general_group.addLayout(prompt_profile_layout)
 
         custom_system_label = QLabel(ui["custom_system_prompt"])
         general_group.addWidget(custom_system_label)
@@ -2396,14 +3018,18 @@ def setup_config_menu():
         custom_template_input.setMinimumHeight(140)
         general_group.addWidget(custom_template_input)
 
+        custom_hint_template_label = QLabel(ui.get("custom_hint_prompt", "Custom hint prompt template (supports {question}, {expected_answer}, {hint}, {language}):"))
+        general_group.addWidget(custom_hint_template_label)
+        custom_hint_template_input = QTextEdit()
+        custom_hint_template_input.setPlainText(config.get("custom_hint_prompt_template", ""))
+        custom_hint_template_input.setMinimumHeight(110)
+        general_group.addWidget(custom_hint_template_input)
+
         reset_custom_prompt_btn = QPushButton(ui.get("reset_custom_prompt", "Reset prompts to defaults"))
         general_group.addWidget(reset_custom_prompt_btn)
-        copy_default_prompt_btn = QPushButton(ui.get("copy_default_prompts", "Copy default prompts"))
-        general_group.addWidget(copy_default_prompt_btn)
 
         def update_default_prompt_placeholders():
             lang_key = language_combo.currentData() or "english"
-            localized_system = get_system_message_for_language(lang_key)
             localized_template = get_language_specific_prompt(
                 lang_key,
                 "{question}",
@@ -2411,58 +3037,48 @@ def setup_config_menu():
                 "{accepted_answers}",
                 "{user_answer}",
             )
-            custom_system_input.setPlaceholderText(ui["custom_system_placeholder"] + "\n\n" + localized_system)
+            custom_system_input.setPlaceholderText(build_custom_system_placeholder(ui))
             custom_template_input.setPlaceholderText(localized_template or DEFAULT_CUSTOM_ANALYSIS_PROMPT_TEMPLATE)
+            custom_hint_template_input.setPlaceholderText(resolve_prompt_profile_content({}, lang_key, PROMPT_PROFILE_DEFAULT)["hint_prompt_template"])
+
+        def get_selected_prompt_profile() -> str:
+            return prompt_profile_combo.currentData() or PROMPT_PROFILE_DEFAULT
 
         def reset_custom_prompts_to_defaults():
+            if get_selected_prompt_profile() != PROMPT_PROFILE_CUSTOM:
+                return
             lang_key = language_combo.currentData() or "english"
-            custom_system_input.setPlainText(get_system_message_for_language(lang_key))
-            custom_template_input.setPlainText(
-                get_language_specific_prompt(
-                    lang_key,
-                    "{question}",
-                    "{expected_answer}",
-                    "{accepted_answers}",
-                    "{user_answer}",
-                )
-            )
-
-        def copy_default_prompts_to_clipboard():
-            lang_key = language_combo.currentData() or "english"
-            default_system = get_system_message_for_language(lang_key)
-            default_template = get_language_specific_prompt(
-                lang_key,
-                "{question}",
-                "{expected_answer}",
-                "{accepted_answers}",
-                "{user_answer}",
-            )
-            payload = (
-                "=== Default system prompt ===\n"
-                f"{default_system}\n\n"
-                "=== Default analysis prompt template ===\n"
-                f"{default_template}"
-            )
-            QApplication.clipboard().setText(payload)
-            showInfo(ui.get("copied_default_prompts", "Default prompts copied to clipboard."))
+            resolved_defaults = resolve_prompt_profile_content({}, lang_key, PROMPT_PROFILE_DEFAULT)
+            custom_system_input.setPlainText(resolved_defaults["system_prompt"])
+            custom_template_input.setPlainText(resolved_defaults["analysis_prompt_template"])
+            custom_hint_template_input.setPlainText(resolved_defaults["hint_prompt_template"])
 
         def update_custom_prompt_inputs():
-            enabled = use_custom_prompt_chk.isChecked()
+            enabled = should_show_custom_prompt_fields(get_selected_prompt_profile())
+            custom_system_label.setVisible(enabled)
+            custom_system_input.setVisible(enabled)
+            custom_template_label.setVisible(enabled)
+            custom_template_input.setVisible(enabled)
+            custom_hint_template_label.setVisible(enabled)
+            custom_hint_template_input.setVisible(enabled)
+            reset_custom_prompt_btn.setVisible(enabled)
+            reset_custom_prompt_btn.setEnabled(enabled)
             custom_system_input.setReadOnly(not enabled)
             custom_template_input.setReadOnly(not enabled)
-            reset_custom_prompt_btn.setEnabled(enabled)
+            custom_hint_template_input.setReadOnly(not enabled)
             if enabled:
                 custom_system_input.setStyleSheet("")
                 custom_template_input.setStyleSheet("")
+                custom_hint_template_input.setStyleSheet("")
             else:
                 custom_system_input.setStyleSheet("background: #f2f2f2; color: #6b6b6b;")
                 custom_template_input.setStyleSheet("background: #f2f2f2; color: #6b6b6b;")
+                custom_hint_template_input.setStyleSheet("background: #f2f2f2; color: #6b6b6b;")
 
         reset_custom_prompt_btn.clicked.connect(reset_custom_prompts_to_defaults)
-        copy_default_prompt_btn.clicked.connect(copy_default_prompts_to_clipboard)
         language_combo.currentTextChanged.connect(update_default_prompt_placeholders)
         update_default_prompt_placeholders()
-        use_custom_prompt_chk.toggled.connect(update_custom_prompt_inputs)
+        prompt_profile_combo.currentIndexChanged.connect(update_custom_prompt_inputs)
         update_custom_prompt_inputs()
         
         layout.addLayout(general_group)
@@ -2678,7 +3294,9 @@ def setup_config_menu():
         cancel_button = QPushButton(ui["cancel"])
         button_layout.addWidget(save_button)
         button_layout.addWidget(cancel_button)
-        layout.addLayout(button_layout)
+        scroll_area.setWidget(content_widget)
+        root_layout.addWidget(scroll_area)
+        root_layout.addLayout(button_layout)
         
         def save_and_close():
             new_config = {
@@ -2687,9 +3305,11 @@ def setup_config_menu():
                 "enabled": enabled_checkbox.isChecked(),
                 "max_tokens": tokens_spin.value(),
                 "temperature": temp_spin.value(),
-                "use_custom_prompt": use_custom_prompt_chk.isChecked(),
+                "prompt_profile": get_selected_prompt_profile(),
+                "use_custom_prompt": False,
                 "custom_system_prompt": custom_system_input.toPlainText().strip(),
                 "custom_analysis_prompt_template": custom_template_input.toPlainText().strip(),
+                "custom_hint_prompt_template": custom_hint_template_input.toPlainText().strip(),
             }
             new_config["show_anki_compare"] = show_anki_chk.isChecked()
             new_config["show_code_compare"] = show_code_chk.isChecked()
@@ -2716,7 +3336,7 @@ def setup_config_menu():
         save_button.clicked.connect(save_and_close)
         cancel_button.clicked.connect(dialog.reject)
         
-        dialog.setLayout(layout)
+        dialog.setLayout(root_layout)
         
         # Compatible avec PyQt5 et PyQt6 pour l'exécution
         try:
@@ -2770,6 +3390,22 @@ def handle_js_message(handled, message, context):
     if message == "regenerate_ai_analysis":
         regenerate_ai_analysis()
         return True, None
+    if message == "toggle_hint_panel":
+        card = mw.reviewer.card if hasattr(mw, "reviewer") and mw.reviewer else None
+        if is_front_hint_eligible(card, "", "Question"):
+            context_data = build_front_hint_context(card)
+            cache_key = context_data["cache_key"]
+            is_open = not (front_hint_panel_state.get("cache_key") == cache_key and front_hint_panel_state.get("is_open"))
+            front_hint_panel_state.update({"cache_key": cache_key, "is_open": is_open})
+            current_hint_context.update(context_data)
+            refresh_current_front_hint_panel(cache_key)
+        return True, None
+    if message == "suggest_ai_hint":
+        suggest_ai_hint()
+        return True, None
+    if message == "regenerate_ai_hint":
+        regenerate_ai_hint()
+        return True, None
     return handled
 
 # Initialisation
@@ -2783,6 +3419,7 @@ def init():
     is_analyzing.clear()
     analysis_results.clear()
     reset_active_question_state()
+    reset_hint_state()
     
 def _debug_dump_front(text, card, kind):
     if kind and "Question" in kind:
@@ -2793,9 +3430,15 @@ def _debug_dump_front(text, card, kind):
 
 # Add the functions to the hooks
 gui_hooks.card_will_show.append(_to_textarea_on_question)
+gui_hooks.card_will_show.append(render_front_hint_panel)
 gui_hooks.card_will_show.append(_code_friendly_diff_on_answer)
 gui_hooks.reviewer_will_compare_answer.append(store_ai_analysis)
 gui_hooks.reviewer_will_render_compared_answer.append(render_enhanced_comparison)
 
 # Initialiser lors du chargement
 init()
+
+
+
+
+

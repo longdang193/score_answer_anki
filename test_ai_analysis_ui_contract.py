@@ -80,6 +80,36 @@ class DummyMW:
         self.taskman = types.SimpleNamespace(run_in_background=lambda task, on_done: None)
 
 
+class DummyWebView:
+    def __init__(self):
+        self.commands = []
+
+    def eval(self, command):
+        self.commands.append(command)
+
+
+class DummyFuture:
+    def __init__(self, result=None, error=None):
+        self._result = result
+        self._error = error
+
+    def result(self):
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+def install_sync_background(mw):
+    def run_in_background(task, on_done):
+        try:
+            result = task()
+            future = DummyFuture(result=result)
+        except Exception as exc:
+            future = DummyFuture(error=exc)
+        on_done(future)
+    mw.taskman = types.SimpleNamespace(run_in_background=run_in_background)
+
+
 def load_addon_module():
     fake_gui_hooks = types.SimpleNamespace(
         webview_will_set_content=HookList(),
@@ -91,6 +121,7 @@ def load_addon_module():
     fake_aqt = types.ModuleType("aqt")
     fake_aqt.gui_hooks = fake_gui_hooks
     fake_aqt.mw = DummyMW()
+    fake_aqt.mw.reviewer.web = DummyWebView()
 
     fake_utils = types.ModuleType("aqt.utils")
     fake_utils.showInfo = lambda *args, **kwargs: None
@@ -107,8 +138,63 @@ def load_addon_module():
     return module, fake_aqt.mw
 
 
+def read_addon_source() -> str:
+    return pathlib.Path(__file__).with_name("__init__.py").read_text(encoding="utf-8")
+
+
 def main():
     addon, mw = load_addon_module()
+
+    merged_legacy = addon.merge_config_with_defaults({"use_custom_prompt": True})
+    assert merged_legacy["prompt_profile"] == "custom"
+    assert merged_legacy["custom_hint_prompt_template"] == ""
+    assert addon.resolve_prompt_profile({"prompt_profile": "default"}) == "default"
+    assert addon.resolve_prompt_profile(
+        {
+            "prompt_profile": "default",
+            "template_prompt_profile_overrides": {"card_1_score": "strict_stem"},
+        }
+    ) == "default"
+
+    addon.save_config(
+        {
+            "prompt_profile": "strict_stem",
+            "template_prompt_profile_overrides": {"card_1_score": "strict_stem"},
+            "use_custom_prompt": True,
+            "custom_system_prompt": "System custom",
+            "custom_analysis_prompt_template": "Q={question}",
+            "custom_hint_prompt_template": "Hint Q={question} A={expected_answer}",
+        }
+    )
+    assert mw.addonManager.config["prompt_profile"] == "strict_stem"
+    assert mw.addonManager.config["use_custom_prompt"] is False
+    assert mw.addonManager.config["custom_hint_prompt_template"] == "Hint Q={question} A={expected_answer}"
+    assert "template_prompt_profile_overrides" not in mw.addonManager.config
+    assert addon.should_show_custom_prompt_fields("custom") is True
+    assert addon.should_show_custom_prompt_fields("strict_stem") is False
+
+    resolved_default = addon.resolve_prompt_profile_content(
+        {"prompt_profile": "default"},
+        "english",
+        "default",
+    )
+    assert resolved_default["system_prompt"]
+    assert resolved_default["analysis_prompt_template"]
+    assert resolved_default["hint_prompt_template"]
+
+    resolved_custom = addon.resolve_prompt_profile_content(
+        {
+            "prompt_profile": "custom",
+            "custom_system_prompt": "System custom",
+            "custom_analysis_prompt_template": "Q={question} A={expected_answer} U={user_answer}",
+            "custom_hint_prompt_template": "Hint for Q={question} A={expected_answer} H={hint}",
+        },
+        "english",
+        "custom",
+    )
+    assert resolved_custom["system_prompt"] == "System custom"
+    assert resolved_custom["analysis_prompt_template"] == "Q={question} A={expected_answer} U={user_answer}"
+    assert resolved_custom["hint_prompt_template"] == "Hint for Q={question} A={expected_answer} H={hint}"
 
     assert hasattr(addon, "build_analysis_cache_key")
     cache_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "2")
@@ -123,6 +209,60 @@ def main():
     assert "review_suggestion" not in prompt
     assert "Accepted answers" in prompt
     assert "221.0" in prompt
+
+    strict_system, strict_prompt = addon.build_prompt_profile_content(
+        {
+            "prompt_profile": "strict_stem",
+            "custom_system_prompt": "",
+            "custom_analysis_prompt_template": "",
+        },
+        "english",
+        "strict_stem",
+        "13 * 17 = ?",
+        "221",
+        ["221", "221.0"],
+        "2",
+    )
+    assert "numeric" in strict_prompt.lower()
+    assert "sign" in strict_prompt.lower()
+    assert "unit" in strict_prompt.lower()
+
+    speaking_system, speaking_prompt = addon.build_prompt_profile_content(
+        {
+            "prompt_profile": "speaking_flexible",
+            "custom_system_prompt": "",
+            "custom_analysis_prompt_template": "",
+        },
+        "english",
+        "speaking_flexible",
+        "How was your weekend?",
+        "I visited my grandmother.",
+        ["I visited my grandmother."],
+        "I went to see family.",
+    )
+    assert "communicative adequacy" in speaking_prompt.lower()
+    assert "alternative valid responses" in speaking_prompt.lower()
+
+    custom_system, custom_prompt = addon.build_prompt_profile_content(
+        {
+            "prompt_profile": "custom",
+            "custom_system_prompt": "System custom",
+            "custom_analysis_prompt_template": "Q={question} A={expected_answer} U={user_answer}",
+        },
+        "english",
+        "custom",
+        "13 * 17 = ?",
+        "221",
+        ["221", "221.0"],
+        "2",
+    )
+    assert custom_system == "System custom"
+    assert custom_prompt == "Q=13 * 17 = ? A=221 U=2"
+
+    assert addon.build_custom_system_placeholder(
+        {"custom_system_placeholder": "If empty, language default system prompt is used."}
+    ) == "If empty, language default system prompt is used."
+    assert "dialog.resize(760, 900)" not in read_addon_source()
 
     mismatch = addon.make_variant_mismatch_result("Variant mismatch", "english")
     assert mismatch["status"] == "variant_mismatch"
@@ -143,6 +283,13 @@ def main():
     assert "font-family: -apple-system" not in rendered
     assert "Wrong." in rendered
     assert "⟳" in rendered
+
+    perfect_cache_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "221")
+    addon.analysis_results[perfect_cache_key] = {"scored": True, "score": 10, "tips": "Perfect."}
+    perfect_rendered = addon.render_enhanced_comparison("<div>anki compare</div>", "221", "221", "[[type:Back]]")
+    assert 'data-score-tier="excellent"' in perfect_rendered
+    assert "--aqi-score-bg:" not in perfect_rendered
+    assert "Perfect." in perfect_rendered
 
     payload = addon.build_analysis_prompt_payload(mw.reviewer.card, "17")
     assert payload["question_text"] == "13 * 17 = ?"
@@ -166,11 +313,99 @@ def main():
     assert addon.should_score_card(note_type_score_only_card) is False
 
     template_score_card = DummyCard(model_name="card_1", template_name="card_1_score")
+    mw.reviewer.card = template_score_card
     assert addon.should_score_card(template_score_card) is True
+    assert addon.get_card_template_name(template_score_card) == "card_1_score"
+    assert addon.resolve_prompt_profile(
+        {"prompt_profile": "default", "template_prompt_profile_overrides": {"card_1_score": "strict_stem"}}
+    ) == "default"
 
     handled, _ = addon.handle_js_message((False, None), "regenerate_ai_analysis", None)
     assert handled is True
 
+    template_score_card.note()["Hint"] = "<b>Factor pairs</b>"
+    assert addon.is_supported_typed_answer_card(template_score_card, template_score_card.question(), "Question") is True
+    assert addon.is_front_hint_eligible(template_score_card, template_score_card.question(), "Question") is True
+
+    plain_question_card = DummyCard(model_name="card_1", template_name="card_1_score")
+    plain_question_card.question = lambda: "No typed answer here"
+    assert addon.is_supported_typed_answer_card(plain_question_card, plain_question_card.question(), "Question") is False
+    assert addon.is_front_hint_eligible(plain_question_card, plain_question_card.question(), "Question") is False
+
+    addon.save_config({"enabled": False, "prompt_profile": "default"})
+    front_rendered = addon.render_front_hint_panel("<div>front side</div>", template_score_card, "Question")
+    assert "aqi-front-hint-panel" in front_rendered
+    assert "Hint" in front_rendered
+    assert "<b>Factor pairs</b>" in front_rendered
+    assert "Suggest Hint" in front_rendered
+    assert "disabled" in front_rendered
+
+    hint_key = addon.build_hint_cache_key(
+        card_id=1,
+        card_ord=0,
+        question_text="13 * 17 = ?",
+        canonical_answer="221",
+        manual_hint="Factor pairs",
+        language="english",
+        prompt_profile="default",
+        hint_prompt_version="v1",
+    )
+    addon.hint_cache[hint_key] = {"status": "ready", "hint_text": "Start with 13 x ?", "error_text": ""}
+    addon.front_hint_panel_state["cache_key"] = hint_key
+    addon.front_hint_panel_state["is_open"] = True
+    addon.invalidate_hint_state(hint_key)
+    assert hint_key not in addon.hint_cache
+    assert addon.front_hint_panel_state == {}
+
+    handled, _ = addon.handle_js_message((False, None), "toggle_hint_panel", None)
+    assert handled is True
+    handled, _ = addon.handle_js_message((False, None), "suggest_ai_hint", None)
+    assert handled is True
+    handled, _ = addon.handle_js_message((False, None), "regenerate_ai_hint", None)
+    assert handled is True
+
+    addon.refresh_front_hint_panel_dom("<div id='aqi-front-hint-body'>patched</div>")
+    assert mw.reviewer.web.commands
+    assert "aqi-front-hint-body" in mw.reviewer.web.commands[-1]
+
+    addon.save_config({"enabled": False, "prompt_profile": "default"})
+    unavailable_hint = addon.suggest_ai_hint()
+    assert unavailable_hint["status"] == "unavailable"
+    assert unavailable_hint["hint_text"] == ""
+    assert unavailable_hint["error_text"]
+
+    assert addon.render_front_hint_panel in sys.modules["aqt"].gui_hooks.card_will_show
+
+    install_sync_background(mw)
+    api_calls = []
+    addon.call_ai_api = lambda **kwargs: api_calls.append(kwargs) or "Start from 13 × 10, not <221>."
+    addon.save_config(
+        {
+            "enabled": True,
+            "prompt_profile": "custom",
+            "language": "english",
+            "provider": "openai",
+            "openai_api_key": "token",
+            "openai_model": "gpt-4.1-mini",
+            "custom_hint_prompt_template": "Q={question} A={expected_answer} H={hint}",
+        }
+    )
+    mw.reviewer.web.commands.clear()
+    ready_hint = addon.suggest_ai_hint()
+    assert ready_hint["status"] == "ready"
+    assert ready_hint["hint_text"] == "Start from 13 × 10, not <221>."
+    assert len(api_calls) == 1
+    assert addon.current_hint_context["question_text"] == "13 * 17 = ?"
+    assert addon.front_hint_panel_state["is_open"] is True
+    assert mw.reviewer.web.commands
+    assert "&lt;221&gt;" in mw.reviewer.web.commands[-1]
+
+    regen_hint = addon.regenerate_ai_hint()
+    assert regen_hint["status"] == "ready"
+    assert len(api_calls) == 2
+    assert addon.current_hint_context["question_text"] == "13 * 17 = ?"
+
 
 if __name__ == "__main__":
     main()
+

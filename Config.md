@@ -66,6 +66,31 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 - **Default**: 0.7
 - **Recommendation**: 0.3-0.7 for educational feedback
 
+#### Default Prompt Profile
+- **Purpose**: Choose evaluation style for scoreable card templates
+- **Options**:
+  - `default`: balanced educational feedback
+  - `strict_stem`: precise grading for numeric/factual answers
+  - `speaking_flexible`: flexible grading for speaking-style responses
+  - `custom`: use your own prompt fields
+
+#### Custom Prompt Fields
+- **Custom system prompt**: shown only when selected profile is `custom`
+- **Custom analysis prompt template**: shown only when selected profile is `custom`
+- **Custom hint prompt template**: shown only when selected profile is `custom`
+- **Storage**: one global custom prompt trio, not per-language values
+- **Supported variables**:
+  - `{question}`
+  - `{expected_answer}`
+  - `{accepted_answers}`
+  - `{user_answer}`
+  - `{language}`
+- **Hint prompt variables**:
+  - `{question}`
+  - `{expected_answer}`
+  - `{hint}`
+  - `{language}`
+
 ### Provider-Specific Settings
 
 Each AI provider has its own tab with specific configuration:\n
@@ -260,3 +285,12 @@ For issues specific to this add-on, check:
 ## Compatibility
 
 ⚠️ This add-on was tested with Anki 2.1.x (release 25.07.5).
+
+
+#### Front-side hint panel
+- Owner: `score_answer_anki`
+- Surface: front side only
+- Gate: `_score` template plus supported typed-answer front-side path
+- Manual `Hint` field passes through stored field content
+- AI hint is generated plain text and is not auto-saved
+- If AI is unavailable, `Suggest Hint` remains visible but disabled with a reason
