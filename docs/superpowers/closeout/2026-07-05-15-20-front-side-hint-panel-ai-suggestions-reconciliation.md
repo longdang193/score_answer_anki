@@ -1,7 +1,7 @@
 ---
 layer: change
 artifact_type: reconciliation
-status: ready_for_merge_pending_clean_tree
+status: closed_main_pushed
 name: front-side-hint-panel-ai-suggestions-closeout
 authoritative_template: docs/operating_system/prompt_templates/single-lane-merge-and-reconcile-prompt.md
 spec: packages/score_answer_anki/docs/superpowers/specs/2026-07-05-11-23-hint-panel-ai-suggestions-spec.md
@@ -52,3 +52,9 @@ Front-side hint panel lane for `packages/score_answer_anki` only.
 2. Create or recover lane branch from current package repo state.
 3. Re-run automated verification on final branch state.
 4. Re-run closure gate before any merge/push.
+
+# Merge / Push Evidence
+
+- [x] Local `main` fast-forwarded to `codex/front-side-hint-panel-closure`
+- [x] Post-merge automated verification rerun on `main`
+- [x] `git push origin main` succeeded
