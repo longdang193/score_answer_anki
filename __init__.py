@@ -92,16 +92,16 @@ HINT_UI_TEXTS = {
 }
 
 AI_UI_TEXTS = {
-    "english": {"loading_title": "AI in progress...", "loading_body": "Please wait while AI works", "loading_note": "Automatic refresh...", "regenerate": "Regenerate"},
-    "french": {"loading_title": "IA en cours...", "loading_body": "Veuillez patienter pendant que l'IA travaille", "loading_note": "Actualisation automatique...", "regenerate": "Relancer"},
-    "spanish": {"loading_title": "IA en progreso...", "loading_body": "Por favor espera mientras la IA trabaja", "loading_note": "Actualización automática...", "regenerate": "Regenerar"},
-    "german": {"loading_title": "KI läuft...", "loading_body": "Bitte warten Sie, während die KI arbeitet", "loading_note": "Automatische Aktualisierung...", "regenerate": "Neu erzeugen"},
-    "portuguese": {"loading_title": "IA em andamento...", "loading_body": "Aguarde enquanto a IA trabalha", "loading_note": "Atualização automática...", "regenerate": "Gerar novamente"},
-    "italian": {"loading_title": "IA in corso...", "loading_body": "Attendi mentre l'IA lavora", "loading_note": "Aggiornamento automatico...", "regenerate": "Rigenera"},
-    "russian": {"loading_title": "ИИ в процессе...", "loading_body": "Подождите, пока ИИ работает", "loading_note": "Автоматическое обновление...", "regenerate": "Повторить"},
-    "japanese": {"loading_title": "AI処理中...", "loading_body": "AIの処理が完了するまでお待ちください", "loading_note": "自動更新...", "regenerate": "再生成"},
-    "chinese": {"loading_title": "AI 处理中...", "loading_body": "请稍候，AI 正在工作", "loading_note": "自动刷新...", "regenerate": "重新生成"},
-    "korean": {"loading_title": "AI 진행 중...", "loading_body": "AI가 작업하는 동안 잠시만 기다려 주세요", "loading_note": "자동 새로고침...", "regenerate": "다시 생성"},
+    "english": {"loading_title": "AI in progress...", "loading_body": "Please wait while AI works", "loading_note": "Automatic refresh...", "regenerate": "Regenerate", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "french": {"loading_title": "IA en cours...", "loading_body": "Veuillez patienter pendant que l'IA travaille", "loading_note": "Actualisation automatique...", "regenerate": "Relancer", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "spanish": {"loading_title": "IA en progreso...", "loading_body": "Por favor espera mientras la IA trabaja", "loading_note": "Actualización automática...", "regenerate": "Regenerar", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "german": {"loading_title": "KI läuft...", "loading_body": "Bitte warten Sie, während die KI arbeitet", "loading_note": "Automatische Aktualisierung...", "regenerate": "Neu erzeugen", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "portuguese": {"loading_title": "IA em andamento...", "loading_body": "Aguarde enquanto a IA trabalha", "loading_note": "Atualização automática...", "regenerate": "Gerar novamente", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "italian": {"loading_title": "IA in corso...", "loading_body": "Attendi mentre l'IA lavora", "loading_note": "Aggiornamento automatico...", "regenerate": "Rigenera", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "russian": {"loading_title": "ИИ в процессе...", "loading_body": "Подождите, пока ИИ работает", "loading_note": "Автоматическое обновление...", "regenerate": "Повторить", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "japanese": {"loading_title": "AI処理中...", "loading_body": "AIの処理が完了するまでお待ちください", "loading_note": "自動更新...", "regenerate": "再生成", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "chinese": {"loading_title": "AI 处理中...", "loading_body": "请稍候，AI 正在工作", "loading_note": "自动刷新...", "regenerate": "重新生成", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
+    "korean": {"loading_title": "AI 진행 중...", "loading_body": "AI가 작업하는 동안 잠시만 기다려 주세요", "loading_note": "자동 새로고침...", "regenerate": "다시 생성", "ai_analysis_sample_answers": "Sample Answers", "ai_analysis_question_variants": "Alternative Questions"},
 }
 
 QUESTION_VARIANT_SEPARATOR = ";;"
@@ -1297,6 +1297,29 @@ def render_ai_rich_text(text) -> str:
         return escape_ai_source_text(text)
 
 
+def build_ai_analysis_sections(ai_analysis: dict) -> list[dict]:
+    return [
+        {"key": "tips", "title_key": None, "kind": "rich_text", "value": ai_analysis.get("tips", "")},
+        {"key": "sample_answers", "title_key": "ai_analysis_sample_answers", "kind": "string_list", "value": ai_analysis.get("sample_answers", [])},
+        {"key": "question_variants", "title_key": "ai_analysis_question_variants", "kind": "string_list", "value": ai_analysis.get("question_variants", [])},
+    ]
+
+
+def render_ai_analysis_section(section: dict, texts: dict) -> str:
+    if section.get("kind") == "rich_text":
+        rendered = render_ai_rich_text(section.get("value", ""))
+        return f'<div class="aqi-section-copy aqi-rich-copy">{rendered}</div>' if rendered else ""
+
+    items = section.get("value") or []
+    if not items:
+        return ""
+
+    title_key = section.get("title_key")
+    title = html.escape(texts.get(title_key, ""), quote=False) if title_key else ""
+    rendered_items = [f'<li>{render_ai_rich_text(item)}</li>' for item in items]
+    heading = f'<div class="aqi-section-label">{title}</div>' if title else ""
+    return heading + '<div class="aqi-section-copy aqi-rich-copy"><ul>' + ''.join(rendered_items) + '</ul></div>'
+
 def build_post_refresh_typeset_js() -> str:
     return (
         "try{"
@@ -1475,7 +1498,19 @@ def build_ai_analysis_panel_html(cache_key: str, language: str = "english") -> s
         icon="⟳",
     )
     tips = ai_analysis.get('tips', texts.get('no_tips_available', 'No tips available'))
-    rendered_tips = render_ai_rich_text(tips)
+    if not isinstance(tips, str) or not tips.strip():
+        tips = texts.get('no_tips_available', 'No tips available')
+
+    if is_scored:
+        section_payload = dict(ai_analysis)
+        section_payload['tips'] = tips
+        rendered_body = ''.join(
+            render_ai_analysis_section(section, ai_texts)
+            for section in build_ai_analysis_sections(section_payload)
+        )
+    else:
+        rendered_body = f'<div class="aqi-section-copy aqi-rich-copy">{render_ai_rich_text(tips)}</div>'
+
     return f"""
     <div class="aqi-analysis-panel-wrap">
         <div class="aqi-panel-card" data-score-tier="{score_tier}">
@@ -1491,9 +1526,7 @@ def build_ai_analysis_panel_html(cache_key: str, language: str = "english") -> s
                 </div>
             </div>
             <div class="aqi-panel-body">
-                <div class="aqi-section-copy aqi-rich-copy">
-                    {rendered_tips}
-                </div>
+                {rendered_body}
             </div>
         </div>
     </div>
@@ -3013,7 +3046,13 @@ def resolve_prompt_profile_content(config, language: str, profile_name: str) -> 
                 "- Treat the expected answer as an anchor example, not exclusive truth.\n"
                 "- Score communicative adequacy, relevance, grammar, and completeness.\n"
                 "- Allow alternative valid responses that satisfy prompt intent.\n"
-                "- Accept alternative valid responses when meaning is preserved."
+                "- Accept alternative valid responses when meaning is preserved.\n"
+                "- Return JSON fields `sample_answers` and `question_variants`.\n"
+                "- `sample_answers` must contain 2-3 strings.\n"
+                "- `question_variants` must contain 2-3 strings.\n"
+                "- At least one sample answer must build from learner answer.\n"
+                "- If learner answer is incomplete, low-scoring, or unnatural, sample answer built from learner answer must correct and expand it into clearly better, higher-scoring full answer.\n"
+                "- Do not repeat learner answer unchanged as sample answer unless it would already score high."
             ),
             "hint_prompt_template": speaking_flexible_hint_template,
         },
@@ -3077,6 +3116,16 @@ def get_language_lock_instruction(language_key: str) -> str:
 def normalize_ai_json_math_delimiters(text: str) -> str:
     return re.sub(r'(?<!\\)\\([()\[\]])', lambda match: '\\' + match.group(0), text)
 
+
+def normalize_ai_analysis_string_list(value, min_items=2, max_items=3) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    if len(cleaned) > max_items:
+        cleaned = cleaned[:max_items]
+    if len(cleaned) < min_items:
+        return []
+    return cleaned
 
 def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str) -> dict:
     """
@@ -3164,6 +3213,8 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answer
                 # Valider le score
                 result["score"] = max(0, min(10, int(result["score"])))
                 result["scored"] = True
+                result["sample_answers"] = normalize_ai_analysis_string_list(result.get("sample_answers"))
+                result["question_variants"] = normalize_ai_analysis_string_list(result.get("question_variants"))
                 return result
         except (json.JSONDecodeError, ValueError, KeyError):
             pass

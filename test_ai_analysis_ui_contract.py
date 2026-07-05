@@ -256,6 +256,12 @@ def main():
     )
     assert "communicative adequacy" in speaking_prompt.lower()
     assert "alternative valid responses" in speaking_prompt.lower()
+    assert "sample_answers" in speaking_prompt
+    assert "question_variants" in speaking_prompt
+    assert "2–3" in speaking_prompt or "2-3" in speaking_prompt
+    assert "build from learner answer" in speaking_prompt.lower()
+    assert "higher-scoring full answer" in speaking_prompt.lower()
+    assert "do not repeat learner answer unchanged" in speaking_prompt.lower()
 
     assert r"\(" in addon.get_language_lock_instruction("english")
     assert "Do not use $...$" in addon.get_language_lock_instruction("english")
@@ -317,6 +323,39 @@ def main():
     assert "Wrong." in rendered
     assert "⟳" in rendered
     assert "Regenerate" in rendered
+
+    addon.analysis_results[cache_key] = {
+        "scored": True,
+        "score": 7,
+        "tips": "Good base answer. Solve \\(x^2 = 4\\).",
+        "sample_answers": ["I went to see family.", "I spent time with my family and relaxed at home. Solve \\(x^2 = 4\\)."],
+        "question_variants": ["What did you do over the weekend?", "How did you spend your weekend?"],
+    }
+    rendered_structured = addon.build_ai_analysis_panel_html(cache_key, "english")
+    assert addon.get_ai_ui_texts("english")["ai_analysis_sample_answers"] in rendered_structured
+    assert addon.get_ai_ui_texts("english")["ai_analysis_question_variants"] in rendered_structured
+    assert "I went to see family." in rendered_structured
+    assert "What did you do over the weekend?" in rendered_structured
+    assert rendered_structured.count("AI Analysis") == 1
+    assert r"\(x^2 = 4\)" in rendered_structured
+
+    speaking_cache_key = addon.build_analysis_cache_key("How was your weekend?", "I visited my grandmother.", "I went to see family.")
+    addon.call_ai_api = lambda **kwargs: '{\n  "score": 7,\n  "tips": "Good base answer.",\n  "sample_answers": ["I went to see family.", "I spent time with my family and relaxed at home."],\n  "question_variants": ["What did you do over the weekend?", "How did you spend your weekend?"]\n}'
+    parsed_end_to_end = addon.analyze_answer_with_ai("How was your weekend?", "I visited my grandmother.", ["I visited my grandmother."], "I went to see family.")
+    addon.analysis_results[speaking_cache_key] = parsed_end_to_end
+    rendered_end_to_end = addon.build_ai_analysis_panel_html(speaking_cache_key, "english")
+    assert addon.get_ai_ui_texts("english")["ai_analysis_sample_answers"] in rendered_end_to_end
+    assert "I went to see family." in rendered_end_to_end
+
+    addon.analysis_results[cache_key] = addon.make_analysis_unavailable("AI disabled", "english")
+    rendered_unavailable = addon.build_ai_analysis_panel_html(cache_key, "english")
+    assert addon.get_ai_ui_texts("english")["ai_analysis_sample_answers"] not in rendered_unavailable
+    assert addon.get_ai_ui_texts("english")["ai_analysis_question_variants"] not in rendered_unavailable
+
+    addon.analysis_results[cache_key] = {"scored": False, "score": None, "tips": "Unavailable."}
+    rendered_unscored = addon.build_ai_analysis_panel_html(cache_key, "english")
+    assert "N/A" in rendered_unscored
+    assert addon.get_ai_ui_texts("english")["ai_analysis_sample_answers"] not in rendered_unscored
 
     loading_analysis_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "17")
     addon.analysis_results.pop(loading_analysis_key, None)
