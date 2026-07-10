@@ -863,6 +863,27 @@ textarea#typeans:focus,
   align-items: center;
   flex: 1;
   min-width: 0;
+  gap: var(--aqi-gap-sm);
+  flex-wrap: wrap;
+}
+
+.aqi-mode-badge {
+  background: var(--aqi-control-bg);
+  color: var(--aqi-score-color);
+  border: 1px solid var(--aqi-control-border);
+  border-radius: var(--aqi-pill-radius);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.aqi-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--aqi-gap-sm);
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .aqi-panel-title {
@@ -1123,7 +1144,7 @@ def _cache_hash(value) -> str:
 
 
 
-def _build_ai_cache_base_parts(*, card_id=None, card_ord=None, question_text: str = "", canonical_answer: str = "", language: str = "", provider: str = "", model: str = "", resolved_prompt_contract: str = "") -> list[str]:
+def _build_ai_cache_base_parts(*, card_id=None, card_ord=None, question_text: str = "", canonical_answer: str = "", language: str = "", provider: str = "", model: str = "", analysis_mode: str = "standard", resolved_prompt_contract: str = "") -> list[str]:
     return [
         str(card_id),
         str(card_ord),
@@ -1132,6 +1153,7 @@ def _build_ai_cache_base_parts(*, card_id=None, card_ord=None, question_text: st
         _cache_hash(language),
         _cache_hash(provider),
         _cache_hash(model),
+        _cache_hash(normalize_analysis_mode(analysis_mode)),
         _cache_hash(resolved_prompt_contract),
     ]
 
@@ -1145,6 +1167,9 @@ def build_analysis_cache_key(
     language: str = "",
     provider: str = "",
     model: str = "",
+    analysis_mode: str = "standard",
+    max_tokens: int = 0,
+    temperature: float = 0.0,
     accepted_answers: list[str] | None = None,
     resolved_prompt_contract: str = "",
     analysis_prompt_version: str = ANALYSIS_PROMPT_VERSION,
@@ -1158,8 +1183,11 @@ def build_analysis_cache_key(
             language=language,
             provider=provider,
             model=model,
+            analysis_mode=analysis_mode,
             resolved_prompt_contract=resolved_prompt_contract,
         ) + [
+            _cache_hash(max_tokens),
+            _cache_hash(temperature),
             _cache_hash(user_answer),
             _cache_hash(accepted_answers or []),
             _cache_hash(analysis_prompt_version),
@@ -1172,7 +1200,7 @@ def invalidate_analysis_state(cache_key: str) -> None:
     analysis_results.pop(cache_key, None)
     is_analyzing.pop(cache_key, None)
 
-def store_ai_analysis(expected_provided_tuple, type_pattern):
+def store_ai_analysis(expected_provided_tuple, type_pattern, analysis_mode: str = "standard"):
     """
     Lance l'analyse IA en arrière-plan pour ne pas bloquer l'UI,
     afin que le verso s'affiche tout de suite avec un spinner.
@@ -1181,46 +1209,34 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
     card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
     if not should_score_card(card):
         return expected_provided_tuple
-    payload = build_analysis_prompt_payload(card, user_answer)
-    runtime = resolve_ai_runtime_config(get_config())
-    cache_key = build_analysis_cache_key(
-        payload["question_text"],
-        payload["canonical_answer"],
-        user_answer,
-        card_id=getattr(card, "id", None),
-        card_ord=getattr(card, "ord", None),
-        language=runtime["language"],
-        provider=runtime["provider"],
-        model=runtime["model"],
-        accepted_answers=payload["accepted_answers"],
-        resolved_prompt_contract=build_prompt_contract_hash(runtime["config"], runtime["language"], runtime["prompt_profile"], "analysis"),
-        analysis_prompt_version=ANALYSIS_PROMPT_VERSION,
-    )
+    request = build_analysis_request(card, user_answer, analysis_mode)
+    cache_key = build_analysis_request_cache_key(card, request)
+    standard_request = request if request["analysis_mode"] == "standard" else build_analysis_request(card, user_answer, "standard")
+    standard_cache_key = build_analysis_request_cache_key(card, standard_request)
     current_analysis_context.update(
         {
             "card_id": getattr(card, "id", None),
-            "expected_provided_tuple": (payload["canonical_answer"], user_answer),
+            "expected_provided_tuple": (request["canonical_answer"], user_answer),
             "type_pattern": type_pattern,
             "cache_key": cache_key,
+            "analysis_mode": request["analysis_mode"],
+            "analysis_request": dict(request),
+            "standard_cache_key": standard_cache_key,
         }
     )
 
-    # Déjà en cache
     if cache_key in ai_analysis_cache:
         print(f"Using cached analysis for {cache_key}")
         return expected_provided_tuple
 
-    # Analyse déjà en cours
     if is_analyzing.get(cache_key, False):
         print(f"Analysis already in progress for {cache_key}")
         return expected_provided_tuple
 
-    # Marquer en cours
     is_analyzing[cache_key] = True
     analysis_results[cache_key] = None
     print(f"Starting background AI analysis for key: {cache_key}")
 
-    # Tâche de fond
     def task():
         try:
             print("Calling AI API for analysis (background)...")
@@ -1228,18 +1244,12 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
             if mismatch_reason:
                 cfg = get_config()
                 return make_variant_mismatch_result(mismatch_reason, cfg.get("language", "english"))
-            return analyze_answer_with_ai(
-                payload["question_text"],
-                payload["canonical_answer"],
-                payload["accepted_answers"],
-                payload["user_answer"],
-            )
+            return analyze_answer_request(request, card=card)
         except Exception as e:
             print(f"AI Analysis Error (bg): {e}")
             cfg = get_config()
             return make_analysis_unavailable(str(e), cfg.get("language", "english"))
 
-    # Callback: reçoit un Future
     def on_done(fut):
         try:
             result = fut.result()
@@ -1248,24 +1258,23 @@ def store_ai_analysis(expected_provided_tuple, type_pattern):
             cfg = get_config()
             result = make_analysis_unavailable(str(e), cfg.get("language", "english"))
         finally:
-            # Toujours dé-marquer l'état d'analyse
             is_analyzing[cache_key] = False
 
-        # Stocker le résultat (un dict, pas un Future)
+        if isinstance(result, dict):
+            result = dict(result)
+            result["analysis_mode"] = request["analysis_mode"]
+            result["standard_cache_key"] = standard_cache_key
         ai_analysis_cache[cache_key] = result
         analysis_results[cache_key] = result
         print(f"AI analysis completed (bg) for {cache_key}")
 
-        # Rafraîchir l'affichage
         try:
             refresh_ai_analysis({"card_id": getattr(card, "id", None), "cache_key": cache_key})
         except Exception as e:
             print(f"Refresh error after AI analysis: {e}")
 
-    # Lancer en arrière-plan
     mw.taskman.run_in_background(task, on_done)
 
-    # Laisser l'UI afficher le verso avec spinner
     return expected_provided_tuple
 
 def clean_html_content(html_content):
@@ -1446,17 +1455,51 @@ def reset_hint_state() -> None:
     front_hint_panel_state.clear()
 
 
-def resolve_ai_runtime_config(config=None, language: str | None = None) -> dict:
+def normalize_analysis_mode(value) -> str:
+    return "deep" if str(value or "").strip().lower() == "deep" else "standard"
+
+
+def get_provider_model_config_key(provider: str, analysis_mode: str = "standard") -> str:
+    mode = normalize_analysis_mode(analysis_mode)
+    return f"{provider}_{'deep_' if mode == 'deep' else ''}model"
+
+def resolve_prompt_profile_for_mode(merged_config: dict, analysis_mode: str = "standard") -> str:
+    mode_settings = get_mode_settings(merged_config, analysis_mode)
+    mode_profile = normalize_prompt_profile(mode_settings.get("prompt_profile"))
+    if mode_profile:
+        return mode_profile
+    mode = normalize_analysis_mode(analysis_mode)
+    if mode == "deep":
+        return normalize_prompt_profile(merged_config.get("deep_prompt_profile")) or normalize_prompt_profile(merged_config.get("standard_prompt_profile")) or normalize_prompt_profile(merged_config.get("prompt_profile")) or PROMPT_PROFILE_DEFAULT
+    return normalize_prompt_profile(merged_config.get("standard_prompt_profile")) or normalize_prompt_profile(merged_config.get("prompt_profile")) or PROMPT_PROFILE_DEFAULT
+
+def resolve_model_for_mode(merged_config: dict, provider: str, analysis_mode: str = "standard") -> str:
+    mode_settings = get_mode_settings(merged_config, analysis_mode)
+    fallback_model = get_provider_default_model(provider) if normalize_analysis_mode(analysis_mode) == "standard" else ""
+    return str(mode_settings.get("model", fallback_model) or fallback_model).strip()
+
+def resolve_ai_runtime_config(config=None, language: str | None = None, analysis_mode: str = "standard") -> dict:
     merged_config = merge_config_with_defaults(config)
-    resolved_language = (language or merged_config.get("language", "english") or "english").strip() or "english"
-    provider = merged_config.get("provider", "openai")
-    model = (merged_config.get(f"{provider}_model", get_provider_default_model(provider)) or "").strip()
-    api_key = (merged_config.get(f"{provider}_api_key", "") or "").strip()
-    base_url = (merged_config.get(f"{provider}_base_url", "") or "").strip()
-    prompt_profile = normalize_prompt_profile(merged_config.get("prompt_profile")) or PROMPT_PROFILE_DEFAULT
+    resolved_analysis_mode = normalize_analysis_mode(analysis_mode)
+    general_settings = merged_config.get("general", {}) if isinstance(merged_config.get("general"), dict) else {}
+    mode_settings = get_mode_settings(merged_config, resolved_analysis_mode)
+    resolved_language = (language or general_settings.get("language", merged_config.get("language", "english")) or "english").strip() or "english"
+    provider = str(mode_settings.get("provider", merged_config.get("provider", "openai")) or "openai").strip() or "openai"
+    provider_settings = get_provider_settings(merged_config, provider)
+    model = resolve_model_for_mode(merged_config, provider, resolved_analysis_mode)
+    api_key = str(provider_settings.get("api_key", merged_config.get(f"{provider}_api_key", "")) or "").strip()
+    base_url = str(provider_settings.get("base_url", merged_config.get(f"{provider}_base_url", "")) or "").strip()
+    prompt_profile = resolve_prompt_profile_for_mode(merged_config, resolved_analysis_mode)
+    mode_enabled = bool(mode_settings.get("enabled", True if resolved_analysis_mode == "standard" else False))
+    max_tokens = int(mode_settings.get("max_tokens", merged_config.get("max_tokens", 200)) or merged_config.get("max_tokens", 200))
+    temperature = float(mode_settings.get("temperature", merged_config.get("temperature", 0.7)) or merged_config.get("temperature", 0.7))
     availability_reason = ""
-    if not merged_config.get("enabled", True):
+    if resolved_analysis_mode == "deep" and not mode_enabled:
+        availability_reason = "Deep analysis disabled"
+    elif resolved_analysis_mode == "standard" and not mode_enabled:
         availability_reason = "AI disabled"
+    elif resolved_analysis_mode == "deep" and not model:
+        availability_reason = "Deep analysis model not configured"
     elif provider == CUSTOM_OPENAI_PROVIDER:
         if not base_url:
             availability_reason = "Custom OpenAI base URL not configured"
@@ -1467,21 +1510,71 @@ def resolve_ai_runtime_config(config=None, language: str | None = None) -> dict:
         availability_reason = f"{provider_name} API key not configured"
     return {
         "config": merged_config,
+        "general": general_settings,
+        "mode_settings": mode_settings,
+        "provider_settings": provider_settings,
+        "analysis_mode": resolved_analysis_mode,
         "language": resolved_language,
         "provider": provider,
         "model": model,
         "api_key": api_key,
         "base_url": base_url,
         "prompt_profile": prompt_profile,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
         "availability_reason": availability_reason,
     }
 
+def build_analysis_request(card, user_answer: str, analysis_mode: str = "standard") -> dict:
+    payload = build_analysis_prompt_payload(card, user_answer)
+    runtime = resolve_ai_runtime_config(get_config(), analysis_mode=analysis_mode)
+    return {
+        "analysis_mode": runtime["analysis_mode"],
+        "question_text": payload["question_text"],
+        "canonical_answer": payload["canonical_answer"],
+        "accepted_answers": payload["accepted_answers"],
+        "user_answer": payload["user_answer"],
+        "language": runtime["language"],
+        "provider": runtime["provider"],
+        "model": runtime["model"],
+        "api_key": runtime["api_key"],
+        "base_url": runtime["base_url"],
+        "prompt_profile": runtime["prompt_profile"],
+        "max_tokens": runtime["max_tokens"],
+        "temperature": runtime["temperature"],
+        "availability_reason": runtime["availability_reason"],
+        "use_notebooklm": False,
+        "notebook_id": "",
+        "notebook_title": "",
+        "context_sources": [],
+    }
+
+def build_analysis_request_cache_key(card, request: dict, config=None) -> str:
+    merged_config = merge_config_with_defaults(config or get_config())
+    general_settings = merged_config.get("general", {}) if isinstance(merged_config.get("general"), dict) else {}
+    language = (request.get("language") or general_settings.get("language", merged_config.get("language", "english")) or "english").strip() or "english"
+    prompt_profile = request.get("prompt_profile") or PROMPT_PROFILE_DEFAULT
+    return build_analysis_cache_key(
+        request.get("question_text", ""),
+        request.get("canonical_answer", ""),
+        request.get("user_answer", ""),
+        card_id=getattr(card, "id", None),
+        card_ord=getattr(card, "ord", None),
+        language=language,
+        provider=request.get("provider", ""),
+        model=request.get("model", ""),
+        analysis_mode=request.get("analysis_mode", "standard"),
+        max_tokens=request.get("max_tokens", 0),
+        temperature=request.get("temperature", 0.0),
+        accepted_answers=request.get("accepted_answers") or [],
+        resolved_prompt_contract=build_prompt_contract_hash(merged_config, language, prompt_profile, "analysis"),
+        analysis_prompt_version=ANALYSIS_PROMPT_VERSION,
+    )
 
 def build_prompt_contract_hash(config, language: str, prompt_profile: str, surface: str = "analysis") -> str:
     resolved = resolve_prompt_profile_content(config, language, prompt_profile)
     template_key = "hint_prompt_template" if surface == "hint" else "analysis_prompt_template"
     return _cache_hash([resolved.get("system_prompt", ""), resolved.get(template_key, "")])
-
 
 def build_front_hint_context(card, rendered_text: str = "", kind: str = "Question") -> dict[str, str | int | None]:
     canonical_answer, _accepted_answers = build_accepted_answer_pool(card)
@@ -1866,6 +1959,17 @@ def refresh_current_front_hint_panel(cache_key: str | None = None) -> None:
         return
     refresh_front_hint_panel_dom(panel_html)
 
+
+def refresh_open_review_surfaces_after_config_save() -> None:
+    try:
+        refresh_ai_analysis()
+    except Exception:
+        pass
+    try:
+        refresh_current_front_hint_panel()
+    except Exception:
+        pass
+
 def refresh_front_hint_panel_dom(panel_html: str) -> None:
     if not refresh_dom_fragment('.aqi-front-hint-wrap', panel_html):
         return
@@ -1888,6 +1992,18 @@ def build_ai_analysis_panel_html(cache_key: str, language: str = "english") -> s
     if not ai_analysis:
         ai_analysis = make_analysis_unavailable("", language)
 
+    context = dict(current_analysis_context)
+    is_current_context = context.get("cache_key") == cache_key
+    analysis_mode = normalize_analysis_mode(
+        ai_analysis.get("analysis_mode")
+        or (context.get("analysis_mode") if is_current_context else "standard")
+    )
+    standard_cache_key = (
+        ai_analysis.get("standard_cache_key")
+        or (context.get("standard_cache_key") if is_current_context else "")
+        or cache_key
+    )
+
     is_scored = bool(ai_analysis.get("scored", True)) and isinstance(ai_analysis.get("score"), int)
     score = ai_analysis.get('score', 5) if is_scored else None
     score_tier = get_score_tier(score, is_scored)
@@ -1897,6 +2013,27 @@ def build_ai_analysis_panel_html(cache_key: str, language: str = "english") -> s
         ai_texts.get("regenerate", "Regenerate"),
         icon="⟳",
     )
+    deep_runtime = resolve_ai_runtime_config(get_config(), language=language, analysis_mode="deep")
+    deep_button = ""
+    if analysis_mode == "standard" and not deep_runtime.get("availability_reason"):
+        deep_button = build_ai_action_button(
+            "run_deep_analysis",
+            ai_texts.get("deep_analysis", "Deep Analysis"),
+        )
+    standard_result_exists = bool(standard_cache_key) and standard_cache_key != cache_key and bool(
+        analysis_results.get(standard_cache_key) or ai_analysis_cache.get(standard_cache_key)
+    )
+    show_standard_button = ""
+    if analysis_mode == "deep" and standard_result_exists:
+        show_standard_button = build_ai_action_button(
+            "show_standard_ai_analysis",
+            ai_texts.get("show_standard", "Show standard"),
+        )
+    mode_label = ai_texts.get(
+        "deep_mode_badge" if analysis_mode == "deep" else "standard_mode_badge",
+        "Deep" if analysis_mode == "deep" else "Standard",
+    )
+    mode_badge = f'<div class="aqi-mode-badge" data-analysis-mode="{analysis_mode}">{html.escape(mode_label)}</div>'
     tips = ai_analysis.get('tips', texts.get('no_tips_available', 'No tips available'))
     if not isinstance(tips, str) or not tips.strip():
         tips = texts.get('no_tips_available', 'No tips available')
@@ -1921,8 +2058,13 @@ def build_ai_analysis_panel_html(cache_key: str, language: str = "english") -> s
                     <h3 class="aqi-panel-title">
                         {texts.get('ai_analysis', 'AI Analysis')}
                     </h3>
+                    {mode_badge}
                 </div>
-                {regenerate_button}
+                <div class="aqi-panel-actions">
+                    {deep_button}
+                    {show_standard_button}
+                    {regenerate_button}
+                </div>
                 <div class="aqi-score-badge">
                     {score_badge}
                 </div>
@@ -2559,6 +2701,9 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
         language=runtime["language"],
         provider=runtime["provider"],
         model=runtime["model"],
+        analysis_mode=runtime["analysis_mode"],
+        max_tokens=runtime["max_tokens"],
+        temperature=runtime["temperature"],
         accepted_answers=payload["accepted_answers"],
         resolved_prompt_contract=build_prompt_contract_hash(runtime["config"], runtime["language"], runtime["prompt_profile"], "analysis"),
         analysis_prompt_version=ANALYSIS_PROMPT_VERSION,
@@ -2631,19 +2776,26 @@ DEFAULT_CONFIG = {
     "language": "english",
     "openai_api_key": "",
     "openai_model": "gpt-4.1-mini",
+    "openai_deep_model": "",
     "gemini_api_key": "",
     "gemini_model": "gemini-2.5-flash",
+    "gemini_deep_model": "",
     "claude_api_key": "",
     "claude_model": "claude-3-5-haiku-latest",
+    "claude_deep_model": "",
     "deepseek_api_key": "",
     "deepseek_model": "deepseek-chat",
+    "deepseek_deep_model": "",
     "groq_api_key": "",
     "groq_model": "llama-3.3-70b-versatile",
+    "groq_deep_model": "",
     "openrouter_api_key": "",
     "openrouter_model": "openrouter/free",
+    "openrouter_deep_model": "",
     "custom_openai_base_url": "",
     "custom_openai_api_key": "",
     "custom_openai_model": "",
+    "custom_openai_deep_model": "",
     "custom_openai_custom_models": [],
     "enabled": True,
     "max_tokens": 200,
@@ -2652,6 +2804,9 @@ DEFAULT_CONFIG = {
     "show_code_compare": True,
     "ui_language": "auto",  # 'auto' | 'en' | 'fr' | 'es' | 'de' | 'pt' | 'it' | 'ru' | 'ja' | 'zh' | 'ko'
     "prompt_profile": "default",
+    "standard_prompt_profile": "default",
+    "deep_prompt_profile": "default",
+    "deep_analysis_model": "",
     "use_custom_prompt": False,
     "custom_system_prompt": "",
     "custom_analysis_prompt_template": "",
@@ -2677,8 +2832,8 @@ def normalize_prompt_profile(value) -> str | None:
     return profile if profile in PROMPT_PROFILE_CHOICES else None
 
 
-def should_show_custom_prompt_fields(profile: str) -> bool:
-    return normalize_prompt_profile(profile) == PROMPT_PROFILE_CUSTOM
+def should_show_custom_prompt_fields(*profiles: str) -> bool:
+    return any(normalize_prompt_profile(profile) == PROMPT_PROFILE_CUSTOM for profile in profiles)
 
 
 def build_custom_system_placeholder(ui) -> str:
@@ -3077,32 +3232,196 @@ def get_config_ui_texts(config=None):
 
 
 CUSTOM_OPENAI_PROVIDER = "custom_openai"
+PROVIDER_KEYS = ("openai", "gemini", "claude", "deepseek", "groq", "openrouter", CUSTOM_OPENAI_PROVIDER)
+
+
+def _default_provider_model_value(provider: str) -> str:
+    return str(DEFAULT_CONFIG.get(f"{provider}_model", "") or "").strip()
+
+
+def _build_default_general_config() -> dict:
+    return {
+        "language": DEFAULT_CONFIG.get("language", "english"),
+        "show_anki_compare": bool(DEFAULT_CONFIG.get("show_anki_compare", True)),
+        "show_code_compare": bool(DEFAULT_CONFIG.get("show_code_compare", True)),
+    }
+
+
+def _build_default_mode_config(mode: str) -> dict:
+    default_provider = DEFAULT_CONFIG.get("provider", "openai")
+    return {
+        "enabled": True if mode == "standard" else False,
+        "provider": default_provider,
+        "model": _default_provider_model_value(default_provider) if mode == "standard" else "",
+        "prompt_profile": DEFAULT_CONFIG.get("standard_prompt_profile" if mode == "standard" else "deep_prompt_profile", PROMPT_PROFILE_DEFAULT),
+        "max_tokens": DEFAULT_CONFIG.get("max_tokens", 200),
+        "temperature": DEFAULT_CONFIG.get("temperature", 0.7),
+    }
+
+
+def _build_default_providers_config() -> dict:
+    providers = {}
+    for provider_key in PROVIDER_KEYS:
+        block = {
+            "api_key": str(DEFAULT_CONFIG.get(f"{provider_key}_api_key", "") or ""),
+            "custom_models": list(DEFAULT_CONFIG.get(f"{provider_key}_custom_models", []) or []),
+        }
+        if provider_key == CUSTOM_OPENAI_PROVIDER:
+            block["base_url"] = str(DEFAULT_CONFIG.get("custom_openai_base_url", "") or "")
+        providers[provider_key] = block
+    return providers
+
+
+def get_mode_settings(config: dict, analysis_mode: str = "standard") -> dict:
+    mode = normalize_analysis_mode(analysis_mode)
+    modes = config.get("modes", {}) if isinstance(config, dict) else {}
+    mode_settings = modes.get(mode, {}) if isinstance(modes, dict) else {}
+    return dict(mode_settings) if isinstance(mode_settings, dict) else {}
+
+
+def get_provider_settings(config: dict, provider: str) -> dict:
+    providers = config.get("providers", {}) if isinstance(config, dict) else {}
+    provider_settings = providers.get(provider, {}) if isinstance(providers, dict) else {}
+    return dict(provider_settings) if isinstance(provider_settings, dict) else {}
 
 
 def merge_config_with_defaults(config):
-    merged = dict(DEFAULT_CONFIG)
     source_config = config or {}
-    if source_config:
-        merged.update(source_config)
+    merged = {
+        "ui_language": source_config.get("ui_language", DEFAULT_CONFIG.get("ui_language", "auto")),
+        "prompt_profile": PROMPT_PROFILE_DEFAULT,
+        "use_custom_prompt": False,
+        "custom_system_prompt": str(source_config.get("custom_system_prompt", DEFAULT_CONFIG.get("custom_system_prompt", "")) or ""),
+        "custom_analysis_prompt_template": str(source_config.get("custom_analysis_prompt_template", DEFAULT_CONFIG.get("custom_analysis_prompt_template", "")) or ""),
+        "custom_hint_prompt_template": str(source_config.get("custom_hint_prompt_template", DEFAULT_CONFIG.get("custom_hint_prompt_template", "")) or ""),
+        "general": _build_default_general_config(),
+        "modes": {
+            "standard": _build_default_mode_config("standard"),
+            "deep": _build_default_mode_config("deep"),
+        },
+        "providers": _build_default_providers_config(),
+    }
+
+    general = source_config.get("general", {}) if isinstance(source_config.get("general"), dict) else {}
+    modes = source_config.get("modes", {}) if isinstance(source_config.get("modes"), dict) else {}
+    standard_mode = modes.get("standard", {}) if isinstance(modes.get("standard"), dict) else {}
+    deep_mode = modes.get("deep", {}) if isinstance(modes.get("deep"), dict) else {}
+    providers = source_config.get("providers", {}) if isinstance(source_config.get("providers"), dict) else {}
+
     merged_prompt_profile = normalize_prompt_profile(source_config.get("prompt_profile"))
     if merged_prompt_profile is None:
         merged_prompt_profile = PROMPT_PROFILE_CUSTOM if bool(source_config.get("use_custom_prompt", False)) else PROMPT_PROFILE_DEFAULT
-    merged["prompt_profile"] = merged_prompt_profile
+
+    merged["general"]["language"] = str(general.get("language", source_config.get("language", merged["general"]["language"])) or "english").strip() or "english"
+    merged["general"]["show_anki_compare"] = bool(general.get("show_anki_compare", source_config.get("show_anki_compare", merged["general"]["show_anki_compare"])))
+    merged["general"]["show_code_compare"] = bool(general.get("show_code_compare", source_config.get("show_code_compare", merged["general"]["show_code_compare"])))
+
+    standard_profile = normalize_prompt_profile(standard_mode.get("prompt_profile")) or normalize_prompt_profile(source_config.get("standard_prompt_profile")) or merged_prompt_profile
+    deep_profile = normalize_prompt_profile(deep_mode.get("prompt_profile")) or normalize_prompt_profile(source_config.get("deep_prompt_profile")) or standard_profile
+    merged["prompt_profile"] = standard_profile
+
+    legacy_standard_provider = str(source_config.get("provider", DEFAULT_CONFIG.get("provider", "openai")) or "openai").strip() or "openai"
+    standard_provider = str(standard_mode.get("provider", legacy_standard_provider) or legacy_standard_provider).strip() or "openai"
+    deep_provider = str(deep_mode.get("provider", standard_provider) or standard_provider).strip() or standard_provider
+
+    legacy_standard_model = str(source_config.get(f"{standard_provider}_model", _default_provider_model_value(standard_provider)) or "").strip()
+    legacy_deep_model = str(source_config.get(get_provider_model_config_key(deep_provider, "deep"), source_config.get("deep_analysis_model", "")) or "").strip()
+
+    standard_model = str(standard_mode.get("model", legacy_standard_model or _default_provider_model_value(standard_provider)) or legacy_standard_model or _default_provider_model_value(standard_provider)).strip()
+    deep_model = str(deep_mode.get("model", legacy_deep_model) or legacy_deep_model).strip()
+
+    legacy_tokens = int(source_config.get("max_tokens", DEFAULT_CONFIG.get("max_tokens", 200)) or DEFAULT_CONFIG.get("max_tokens", 200))
+    legacy_temperature = float(source_config.get("temperature", DEFAULT_CONFIG.get("temperature", 0.7)) or DEFAULT_CONFIG.get("temperature", 0.7))
+
+    standard_enabled = bool(standard_mode.get("enabled", source_config.get("enabled", True)))
+    deep_enabled = bool(deep_mode.get("enabled", bool(deep_model)))
+
+    merged["modes"]["standard"] = {
+        "enabled": standard_enabled,
+        "provider": standard_provider,
+        "model": standard_model,
+        "prompt_profile": standard_profile,
+        "max_tokens": int(standard_mode.get("max_tokens", legacy_tokens) or legacy_tokens),
+        "temperature": float(standard_mode.get("temperature", legacy_temperature) or legacy_temperature),
+    }
+    merged["modes"]["deep"] = {
+        "enabled": deep_enabled,
+        "provider": deep_provider,
+        "model": deep_model,
+        "prompt_profile": deep_profile,
+        "max_tokens": int(deep_mode.get("max_tokens", legacy_tokens) or legacy_tokens),
+        "temperature": float(deep_mode.get("temperature", legacy_temperature) or legacy_temperature),
+    }
+
+    for provider_key in PROVIDER_KEYS:
+        provider_block = providers.get(provider_key, {}) if isinstance(providers.get(provider_key), dict) else {}
+        merged_provider = dict(merged["providers"].get(provider_key, {}))
+        merged_provider["api_key"] = str(provider_block.get("api_key", source_config.get(f"{provider_key}_api_key", merged_provider.get("api_key", ""))) or "")
+        custom_models = provider_block.get("custom_models", source_config.get(f"{provider_key}_custom_models", merged_provider.get("custom_models", [])))
+        merged_provider["custom_models"] = list(custom_models) if isinstance(custom_models, list) else []
+        if provider_key == CUSTOM_OPENAI_PROVIDER:
+            merged_provider["base_url"] = str(provider_block.get("base_url", source_config.get("custom_openai_base_url", merged_provider.get("base_url", ""))) or "")
+        merged["providers"][provider_key] = merged_provider
+
+    merged["standard_prompt_profile"] = merged["modes"]["standard"]["prompt_profile"]
+    merged["deep_prompt_profile"] = merged["modes"]["deep"]["prompt_profile"]
+    merged["deep_analysis_model"] = merged["modes"]["deep"]["model"]
+    merged["language"] = merged["general"]["language"]
+    merged["show_anki_compare"] = merged["general"]["show_anki_compare"]
+    merged["show_code_compare"] = merged["general"]["show_code_compare"]
+    merged["provider"] = merged["modes"]["standard"]["provider"]
+    merged["enabled"] = merged["modes"]["standard"]["enabled"]
+    merged["max_tokens"] = merged["modes"]["standard"]["max_tokens"]
+    merged["temperature"] = merged["modes"]["standard"]["temperature"]
+
+    for provider_key in PROVIDER_KEYS:
+        provider_settings = merged["providers"][provider_key]
+        merged[f"{provider_key}_api_key"] = provider_settings.get("api_key", "")
+        merged[f"{provider_key}_custom_models"] = list(provider_settings.get("custom_models", []))
+        if provider_key == CUSTOM_OPENAI_PROVIDER:
+            merged["custom_openai_base_url"] = provider_settings.get("base_url", "")
+        merged[f"{provider_key}_model"] = _default_provider_model_value(provider_key)
+        merged[f"{provider_key}_deep_model"] = ""
+    merged[f"{merged['modes']['standard']['provider']}_model"] = merged["modes"]["standard"]["model"]
+    merged[f"{merged['modes']['deep']['provider']}_deep_model"] = merged["modes"]["deep"]["model"]
+
     merged["use_custom_prompt"] = False
     merged.pop("template_prompt_profile_overrides", None)
     return merged
 
 
 def build_persisted_config(config):
-    persisted = merge_config_with_defaults(config)
-    persisted.pop("template_prompt_profile_overrides", None)
-    return persisted
+    merged = merge_config_with_defaults(config)
+    return {
+        "general": dict(merged.get("general", {})),
+        "modes": {
+            "standard": dict(get_mode_settings(merged, "standard")),
+            "deep": dict(get_mode_settings(merged, "deep")),
+        },
+        "providers": {provider_key: dict(merged.get("providers", {}).get(provider_key, {})) for provider_key in PROVIDER_KEYS},
+        "ui_language": merged.get("ui_language", DEFAULT_CONFIG.get("ui_language", "auto")),
+        "prompt_profile": merged.get("prompt_profile", PROMPT_PROFILE_DEFAULT),
+        "use_custom_prompt": False,
+        "custom_system_prompt": merged.get("custom_system_prompt", ""),
+        "custom_analysis_prompt_template": merged.get("custom_analysis_prompt_template", ""),
+        "custom_hint_prompt_template": merged.get("custom_hint_prompt_template", ""),
+    }
 
 
 def get_provider_default_model(provider):
     models = PROVIDERS.get(provider, {}).get("models", [])
     return models[0] if models else ""
 
+
+def build_provider_model_test_targets(standard_model: str, deep_model: str) -> list[tuple[str, str]]:
+    targets = []
+    standard_model = str(standard_model or "").strip()
+    deep_model = str(deep_model or "").strip()
+    if standard_model:
+        targets.append(("standard", standard_model))
+    if deep_model:
+        targets.append(("deep", deep_model))
+    return targets
 
 def build_openai_compatible_headers(api_key):
     headers = {"Content-Type": "application/json"}
@@ -3576,23 +3895,26 @@ def normalize_ai_analysis_string_list(value, min_items=2, max_items=3) -> list[s
         return []
     return cleaned
 
-def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str) -> dict:
+def analyze_answer_request(request: dict, card=None) -> dict:
     """
-    **MODIFIÉ: Analyse la réponse de l'utilisateur avec l'IA en incluant le contexte de la question**
-    Retourne un dictionnaire avec le score, les conseils et la suggestion de révision
+    Analyse une requête d'analyse déjà résolue pour garder un SSOT unique.
     """
-    runtime = resolve_ai_runtime_config(get_config())
-    config = runtime["config"]
-    language = runtime["language"]
-    provider = runtime["provider"]
-    model = runtime["model"]
-    api_key = runtime["api_key"]
-    base_url = runtime["base_url"]
-    if runtime["availability_reason"]:
-        return make_analysis_unavailable(runtime["availability_reason"], language)
+    config = merge_config_with_defaults(get_config())
+    general_settings = config.get("general", {}) if isinstance(config.get("general"), dict) else {}
+    language = (request.get("language") or general_settings.get("language", config.get("language", "english")) or "english").strip() or "english"
+    provider = request.get("provider") or config.get("provider", "openai")
+    model = (request.get("model", "") or "").strip()
+    api_key = (request.get("api_key") or get_provider_settings(config, provider).get("api_key", config.get(f"{provider}_api_key", "")) or "").strip()
+    base_url = (request.get("base_url") or get_provider_settings(config, provider).get("base_url", config.get(f"{provider}_base_url", "")) or "").strip()
+    if request.get("availability_reason"):
+        return make_analysis_unavailable(request.get("availability_reason") or "", language)
 
-    card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
-    profile = runtime["prompt_profile"]
+    card = card or (mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None)
+    question_text = request.get("question_text", "")
+    true_answer = request.get("canonical_answer", "")
+    accepted_answers = request.get("accepted_answers") or []
+    user_answer = request.get("user_answer", "")
+    profile = request.get("prompt_profile") or PROMPT_PROFILE_DEFAULT
     active_profile = profile
     front_text_raw = ""
     cloze_targets = []
@@ -3634,22 +3956,20 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answer
             messages=messages,
             provider=provider,
             model=model,
-            max_tokens=config.get("max_tokens", 200),
-            temperature=config.get("temperature", 0.7),
+            max_tokens=int(request.get("max_tokens", config.get("max_tokens", 200)) or config.get("max_tokens", 200)),
+            temperature=float(request.get("temperature", config.get("temperature", 0.7)) or config.get("temperature", 0.7)),
             api_key=api_key,
             base_url=base_url
         )
-        
-        # Tenter de parser la réponse JSON
+
         try:
-            # Nettoyer la réponse (enlever les balises markdown si présentes)
             clean_response = ai_response.strip()
             if clean_response.startswith("```json"):
                 clean_response = clean_response[7:]
             if clean_response.endswith("```"):
                 clean_response = clean_response[:-3]
             clean_response = clean_response.strip()
-            
+
             parse_candidates = [clean_response]
             normalized_response = normalize_ai_json_math_delimiters(clean_response)
             if normalized_response != clean_response:
@@ -3665,9 +3985,7 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answer
 
             if result is None:
                 raise json.JSONDecodeError("Invalid AI JSON response", clean_response, 0)
-            # Valider les champs requis
             if all(key in result for key in ["score", "tips"]):
-                # Valider le score
                 result["score"] = max(0, min(10, int(result["score"])))
                 if force_exact_match_perfect_score:
                     result["score"] = 10
@@ -3681,12 +3999,11 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answer
                 return result
         except (json.JSONDecodeError, ValueError, KeyError):
             pass
-        
-        # Si le parsing JSON échoue, essayer d'extraire les informations
+
         lines = ai_response.split('\n')
         score = 5
         tips = "Analyse disponible dans la réponse complète"
-        
+
         for line in lines:
             if 'score' in line.lower():
                 try:
@@ -3696,24 +4013,51 @@ def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answer
                         score = max(0, min(10, int(score_match.group(1))))
                 except:
                     pass
-        
+
         if force_exact_match_perfect_score:
             score = 10
         return {"scored": True, "score": score, "tips": ai_response[:300] + "..."}
-        
+
     except Exception as e:
-        print(f"AI Analysis Error: {str(e)}")  # Pour debugging
+        print(f"AI Analysis Error: {str(e)}")
         return make_analysis_unavailable(f"{PROVIDERS[provider]['name']}: {str(e)}", language)
+
+def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str, analysis_mode: str = "standard") -> dict:
+    """
+    **MODIFIÉ: Analyse la réponse de l'utilisateur avec l'IA en incluant le contexte de la question**
+    Retourne un dictionnaire avec le score, les conseils et la suggestion de révision
+    """
+    runtime = resolve_ai_runtime_config(get_config(), analysis_mode=analysis_mode)
+    return analyze_answer_request(
+        {
+            "analysis_mode": runtime["analysis_mode"],
+            "question_text": question_text,
+            "canonical_answer": true_answer,
+            "accepted_answers": accepted_answers,
+            "user_answer": user_answer,
+            "language": runtime["language"],
+            "provider": runtime["provider"],
+            "model": runtime["model"],
+            "api_key": runtime["api_key"],
+            "base_url": runtime["base_url"],
+            "prompt_profile": runtime["prompt_profile"],
+            "availability_reason": runtime["availability_reason"],
+            "use_notebooklm": False,
+            "notebook_id": "",
+            "notebook_title": "",
+            "context_sources": [],
+        },
+        card=card if (card := (mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None)) else None,
+    )
 
 def setup_config_menu():
     """Configure le menu de configuration"""
     def open_config():
-        config = get_config()
+        config = merge_config_with_defaults(get_config())
         ui = get_config_ui_texts(config)
-        
-        # Interface simple pour la configuration
-        from aqt.qt import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QTextEdit, QApplication, QScrollArea, QAbstractSpinBox
-        
+
+        from aqt.qt import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QSpinBox, QTabWidget, QWidget, QTextEdit, QScrollArea, QAbstractSpinBox
+
         dialog = QDialog(mw)
         dialog.setWindowTitle(ui["window_title"])
         dialog.setMinimumWidth(550)
@@ -3724,90 +4068,12 @@ def setup_config_menu():
         scroll_area.setWidgetResizable(True)
         content_widget = QWidget()
         layout = QVBoxLayout(content_widget)
-        
-        # Paramètres généraux en haut
-        general_group = QVBoxLayout()
-        
-        # Display options
-        compare_group = QVBoxLayout()
-        show_anki_chk = QCheckBox(ui["show_anki_compare"])
-        show_anki_chk.setChecked(config.get("show_anki_compare", True))
-        compare_group.addWidget(show_anki_chk)
 
-        show_code_chk = QCheckBox(ui["show_code_compare"])
-        show_code_chk.setChecked(config.get("show_code_compare", True))
-        compare_group.addWidget(show_code_chk)
+        general_settings = dict(config.get("general", {}))
+        standard_mode = get_mode_settings(config, "standard")
+        deep_mode = get_mode_settings(config, "deep")
+        provider_settings = config.get("providers", {}) if isinstance(config.get("providers"), dict) else {}
 
-        layout.addLayout(compare_group)
-        
-        # Sélecteur de fournisseur principal
-        provider_layout = QHBoxLayout()
-        provider_layout.addWidget(QLabel(ui["ai_provider"]))
-        provider_combo = QComboBox()
-        provider_items = [(key, value["name"]) for key, value in PROVIDERS.items()]
-        for key, name in provider_items:
-            provider_combo.addItem(name, key)
-        
-        current_provider = config.get("provider", "openai")
-        provider_index = next((i for i, (key, _) in enumerate(provider_items) if key == current_provider), 0)
-        provider_combo.setCurrentIndex(provider_index)
-        provider_layout.addWidget(provider_combo)
-        general_group.addLayout(provider_layout)
-        
-        # Analysis language selector
-        language_layout = QHBoxLayout()
-        language_layout.addWidget(QLabel(ui["analysis_language"]))
-        language_combo = QComboBox()
-        for lang_key, display_name in get_supported_language_options():
-            language_combo.addItem(display_name, lang_key)
-        
-        current_language = config.get("language", "english")
-        language_index = next((i for i, (key, _) in enumerate(LANGUAGES.items()) if key == current_language), 0)
-        language_combo.setCurrentIndex(language_index)
-        language_layout.addWidget(language_combo)
-        general_group.addLayout(language_layout)
-        
-        # Activation
-        enabled_checkbox = QCheckBox(ui["enable_ai"])
-        enabled_checkbox.setChecked(config.get("enabled", True))
-        general_group.addWidget(enabled_checkbox)
-        
-        # Max tokens
-        tokens_layout = QHBoxLayout()
-        tokens_layout.addWidget(QLabel(ui["max_tokens"]))
-        tokens_spin = QSpinBox()
-        tokens_spin.setRange(100, 16000)
-        tokens_spin.setSingleStep(100)
-        tokens_spin.setAccelerated(True)
-        tokens_spin.setKeyboardTracking(False)
-        tokens_spin.setReadOnly(False)
-        tokens_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
-        tokens_spin.setCorrectionMode(QAbstractSpinBox.CorrectionMode.CorrectToNearestValue)
-        try:
-            tokens_spin.lineEdit().setReadOnly(False)
-        except Exception:
-            pass
-        tokens_spin.setValue(min(max(config.get("max_tokens", 300), 100), 16000))
-        tokens_layout.addWidget(tokens_spin)
-        general_group.addLayout(tokens_layout)
-        feedback_length_help = QLabel(ui.get("feedback_length_help", "Lower = shorter, faster feedback."))
-        feedback_length_help.setStyleSheet("color: #666; font-size: 11px; margin-bottom: 6px;")
-        feedback_length_help.setWordWrap(True)
-        general_group.addWidget(feedback_length_help)
-        
-        # Temperature
-        temp_layout = QHBoxLayout()
-        temp_layout.addWidget(QLabel(ui["temperature"]))
-        temp_spin = QDoubleSpinBox()
-        temp_spin.setRange(0.0, 1.0)
-        temp_spin.setSingleStep(0.1)
-        temp_spin.setValue(config.get("temperature", 0.7))
-        temp_layout.addWidget(temp_spin)
-        general_group.addLayout(temp_layout)
-
-        prompt_profile_layout = QHBoxLayout()
-        prompt_profile_layout.addWidget(QLabel(ui.get("prompt_profile", "Default prompt profile")))
-        prompt_profile_combo = QComboBox()
         prompt_profile_options = [
             ("Default", PROMPT_PROFILE_DEFAULT),
             ("Strict STEM", PROMPT_PROFILE_STRICT_STEM),
@@ -3815,36 +4081,287 @@ def setup_config_menu():
             ("Cloze Recall", PROMPT_PROFILE_CLOZE_RECALL),
             ("Custom", PROMPT_PROFILE_CUSTOM),
         ]
-        for label, value in prompt_profile_options:
-            prompt_profile_combo.addItem(label, value)
-        current_prompt_profile = normalize_prompt_profile(config.get("prompt_profile")) or PROMPT_PROFILE_DEFAULT
-        prompt_profile_combo.setCurrentIndex(next((idx for idx, (_label, value) in enumerate(prompt_profile_options) if value == current_prompt_profile), 0))
-        prompt_profile_layout.addWidget(prompt_profile_combo)
-        general_group.addLayout(prompt_profile_layout)
+
+        provider_api_inputs = {}
+        provider_base_url_inputs = {}
+        provider_custom_models_inputs = {}
+        mode_widgets = {}
+
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
+
+        def configure_numeric_spinbox(spinbox):
+            spinbox.setKeyboardTracking(False)
+            try:
+                spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
+            except Exception:
+                pass
+            try:
+                spinbox.setCorrectionMode(QAbstractSpinBox.CorrectionMode.CorrectToNearestValue)
+            except Exception:
+                pass
+            try:
+                spinbox.lineEdit().setReadOnly(False)
+            except Exception:
+                pass
+            return spinbox
+
+        class TemperatureSpinBox(QSpinBox):
+            def textFromValue(self, value):
+                return f"{int(value) / 100:.2f}"
+
+            def valueFromText(self, text):
+                try:
+                    return int(round(float(str(text).strip()) * 100))
+                except Exception:
+                    return 0
+
+        def parse_provider_custom_models(provider_key: str) -> list[str]:
+            raw_value = ""
+            widget = provider_custom_models_inputs.get(provider_key)
+            if widget is not None:
+                raw_value = widget.toPlainText()
+            else:
+                raw_value = "\n".join(provider_settings.get(provider_key, {}).get("custom_models", []) or [])
+            values = []
+            for line in str(raw_value).replace(",", "\n").splitlines():
+                item = line.strip()
+                if item and item not in values:
+                    values.append(item)
+            return values
+
+        def get_provider_model_choices(provider_key: str) -> list[str]:
+            choices = []
+            for item in PROVIDERS.get(provider_key, {}).get("models", []):
+                model_id = str(item or "").strip()
+                if model_id and model_id not in choices:
+                    choices.append(model_id)
+            for model_id in parse_provider_custom_models(provider_key):
+                if model_id not in choices:
+                    choices.append(model_id)
+            return choices
+
+        def set_combo_values(combo, values: list[str], current_text: str = ""):
+            combo.blockSignals(True)
+            combo.clear()
+            if values:
+                combo.addItems(values)
+            current_text = str(current_text or "").strip()
+            if current_text:
+                if current_text in values:
+                    combo.setCurrentText(current_text)
+                else:
+                    combo.setEditText(current_text)
+            combo.blockSignals(False)
+
+        general_tab = QWidget()
+        general_layout = QVBoxLayout(general_tab)
+
+        language_layout = QHBoxLayout()
+        language_layout.addWidget(QLabel(ui["analysis_language"]))
+        language_combo = QComboBox()
+        supported_languages = get_supported_language_options()
+        for lang_key, display_name in supported_languages:
+            language_combo.addItem(display_name, lang_key)
+        current_language = general_settings.get("language", "english")
+        current_language_index = next((index for index, (lang_key, _name) in enumerate(supported_languages) if lang_key == current_language), 0)
+        language_combo.setCurrentIndex(current_language_index)
+        language_layout.addWidget(language_combo)
+        general_layout.addLayout(language_layout)
+
+        show_anki_chk = QCheckBox(ui["show_anki_compare"])
+        show_anki_chk.setChecked(bool(general_settings.get("show_anki_compare", True)))
+        general_layout.addWidget(show_anki_chk)
+
+        show_code_chk = QCheckBox(ui["show_code_compare"])
+        show_code_chk.setChecked(bool(general_settings.get("show_code_compare", True)))
+        general_layout.addWidget(show_code_chk)
 
         custom_system_label = QLabel(ui["custom_system_prompt"])
-        general_group.addWidget(custom_system_label)
+        general_layout.addWidget(custom_system_label)
         custom_system_input = QTextEdit()
         custom_system_input.setPlainText(config.get("custom_system_prompt", ""))
         custom_system_input.setMinimumHeight(80)
-        general_group.addWidget(custom_system_input)
+        general_layout.addWidget(custom_system_input)
 
         custom_template_label = QLabel(ui["custom_analysis_prompt"])
-        general_group.addWidget(custom_template_label)
+        general_layout.addWidget(custom_template_label)
         custom_template_input = QTextEdit()
         custom_template_input.setPlainText(config.get("custom_analysis_prompt_template", ""))
         custom_template_input.setMinimumHeight(140)
-        general_group.addWidget(custom_template_input)
+        general_layout.addWidget(custom_template_input)
 
         custom_hint_template_label = QLabel(ui.get("custom_hint_prompt", "Custom hint prompt template (supports {question}, {expected_answer}, {hint}, {language}):"))
-        general_group.addWidget(custom_hint_template_label)
+        general_layout.addWidget(custom_hint_template_label)
         custom_hint_template_input = QTextEdit()
         custom_hint_template_input.setPlainText(config.get("custom_hint_prompt_template", ""))
         custom_hint_template_input.setMinimumHeight(110)
-        general_group.addWidget(custom_hint_template_input)
+        general_layout.addWidget(custom_hint_template_input)
 
         reset_custom_prompt_btn = QPushButton(ui.get("reset_custom_prompt", "Reset prompts to defaults"))
-        general_group.addWidget(reset_custom_prompt_btn)
+        general_layout.addWidget(reset_custom_prompt_btn)
+        general_layout.addStretch(1)
+        tabs.addTab(general_tab, "General")
+
+        def create_mode_tab(mode_key: str, title: str, enabled_label: str, mode_config: dict):
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+
+            enabled_checkbox = QCheckBox(enabled_label)
+            enabled_checkbox.setChecked(bool(mode_config.get("enabled", mode_key == "standard")))
+            tab_layout.addWidget(enabled_checkbox)
+
+            provider_layout = QHBoxLayout()
+            provider_layout.addWidget(QLabel(ui["ai_provider"]))
+            provider_combo = QComboBox()
+            for provider_key, provider_info in PROVIDERS.items():
+                provider_combo.addItem(provider_info["name"], provider_key)
+            selected_provider = str(mode_config.get("provider", DEFAULT_CONFIG.get("provider", "openai")) or DEFAULT_CONFIG.get("provider", "openai")).strip() or DEFAULT_CONFIG.get("provider", "openai")
+            provider_index = next((index for index in range(provider_combo.count()) if provider_combo.itemData(index) == selected_provider), 0)
+            provider_combo.setCurrentIndex(provider_index)
+            provider_layout.addWidget(provider_combo)
+            tab_layout.addLayout(provider_layout)
+
+            model_layout = QHBoxLayout()
+            model_layout.addWidget(QLabel("Model:"))
+            model_combo = QComboBox()
+            model_combo.setEditable(True)
+            model_layout.addWidget(model_combo)
+            tab_layout.addLayout(model_layout)
+
+            prompt_layout = QHBoxLayout()
+            prompt_label = ui.get("standard_prompt_profile", "Standard prompt profile") if mode_key == "standard" else ui.get("deep_prompt_profile", "Deep prompt profile")
+            prompt_layout.addWidget(QLabel(prompt_label))
+            prompt_combo = QComboBox()
+            for label, value in prompt_profile_options:
+                prompt_combo.addItem(label, value)
+            current_prompt_profile = normalize_prompt_profile(mode_config.get("prompt_profile")) or PROMPT_PROFILE_DEFAULT
+            prompt_index = next((index for index, (_label, value) in enumerate(prompt_profile_options) if value == current_prompt_profile), 0)
+            prompt_combo.setCurrentIndex(prompt_index)
+            prompt_layout.addWidget(prompt_combo)
+            tab_layout.addLayout(prompt_layout)
+
+            tokens_layout = QHBoxLayout()
+            tokens_layout.addWidget(QLabel(ui["max_tokens"]))
+            tokens_spin = QSpinBox()
+            tokens_spin.setRange(100, 16000)
+            tokens_spin.setSingleStep(100)
+            tokens_spin.setAccelerated(True)
+            tokens_spin.setReadOnly(False)
+            configure_numeric_spinbox(tokens_spin)
+            tokens_spin.setValue(min(max(int(mode_config.get("max_tokens", 200) or 200), 100), 16000))
+            tokens_layout.addWidget(tokens_spin)
+            tab_layout.addLayout(tokens_layout)
+
+            feedback_length_help = QLabel(ui.get("feedback_length_help", "Lower = shorter, faster feedback."))
+            feedback_length_help.setStyleSheet("color: #666; font-size: 11px; margin-bottom: 6px;")
+            feedback_length_help.setWordWrap(True)
+            tab_layout.addWidget(feedback_length_help)
+
+            temp_layout = QHBoxLayout()
+            temp_layout.addWidget(QLabel(ui["temperature"]))
+            temp_spin = TemperatureSpinBox()
+            temp_spin.setRange(0, 100)
+            temp_spin.setSingleStep(10)
+            configure_numeric_spinbox(temp_spin)
+            temp_spin.setValue(int(round(float(mode_config.get("temperature", 0.7) or 0.7) * 100)))
+            temp_layout.addWidget(temp_spin)
+            tab_layout.addLayout(temp_layout)
+            tab_layout.addStretch(1)
+
+            def refresh_model_choices():
+                provider_key = provider_combo.currentData() or DEFAULT_CONFIG.get("provider", "openai")
+                current_text = model_combo.currentText().strip()
+                fallback_text = get_provider_default_model(provider_key) if mode_key == "standard" else ""
+                next_text = current_text or str(mode_config.get("model", "") or fallback_text).strip()
+                set_combo_values(model_combo, get_provider_model_choices(provider_key), next_text)
+
+            controlled_widgets = [provider_combo, model_combo, prompt_combo, tokens_spin, temp_spin]
+
+            def update_mode_enabled_state():
+                enabled = enabled_checkbox.isChecked()
+                for widget in controlled_widgets:
+                    widget.setEnabled(enabled)
+
+            provider_combo.currentIndexChanged.connect(refresh_model_choices)
+            enabled_checkbox.toggled.connect(update_mode_enabled_state)
+            refresh_model_choices()
+            update_mode_enabled_state()
+
+            mode_widgets[mode_key] = {
+                "enabled": enabled_checkbox,
+                "provider": provider_combo,
+                "model": model_combo,
+                "prompt_profile": prompt_combo,
+                "max_tokens": tokens_spin,
+                "temperature": temp_spin,
+                "refresh_models": refresh_model_choices,
+            }
+            tabs.addTab(tab, title)
+
+        create_mode_tab("standard", "Standard", "Use Standard Analysis", standard_mode)
+        create_mode_tab("deep", "Deep", "Use Deep Analysis", deep_mode)
+
+        providers_tab = QWidget()
+        providers_layout = QVBoxLayout(providers_tab)
+        provider_tabs = QTabWidget()
+
+        provider_instructions = {
+            "openai": "Get your API key at: https://platform.openai.com/api-keys",
+            "gemini": "Get your API key at: https://aistudio.google.com/app/apikey",
+            "claude": "Get your API key at: https://console.anthropic.com/",
+            "deepseek": "Get your API key at: https://platform.deepseek.com/api_keys",
+            "groq": "Get your API key at: https://console.groq.com/keys",
+            "openrouter": "Get your API key at: https://openrouter.ai/settings/keys\nTip: use openrouter/free for maximum compatibility.",
+            CUSTOM_OPENAI_PROVIDER: "Enter base URL root, for example: http://127.0.0.1:20128/v1\nDo not enter the full /chat/completions endpoint. API key is optional for local routers.",
+        }
+
+        for provider_key, provider_info in PROVIDERS.items():
+            provider_tab = QWidget()
+            provider_tab_layout = QVBoxLayout(provider_tab)
+            current_provider_settings = provider_settings.get(provider_key, {}) if isinstance(provider_settings.get(provider_key), dict) else {}
+
+            if provider_key == CUSTOM_OPENAI_PROVIDER:
+                base_url_layout = QHBoxLayout()
+                base_url_layout.addWidget(QLabel(ui.get("base_url", "Base URL:")))
+                base_url_input = QLineEdit(str(current_provider_settings.get("base_url", "") or ""))
+                base_url_input.setPlaceholderText(ui.get("base_url_placeholder", "http://127.0.0.1:20128/v1"))
+                base_url_layout.addWidget(base_url_input)
+                provider_tab_layout.addLayout(base_url_layout)
+                provider_base_url_inputs[provider_key] = base_url_input
+
+            api_key_layout = QHBoxLayout()
+            api_key_label = ui.get("api_key_optional", "API Key (optional):") if provider_key == CUSTOM_OPENAI_PROVIDER else f"{provider_info['name']} API Key:"
+            api_key_layout.addWidget(QLabel(api_key_label))
+            api_key_input = QLineEdit(str(current_provider_settings.get("api_key", "") or ""))
+            try:
+                api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            except AttributeError:
+                try:
+                    api_key_input.setEchoMode(QLineEdit.Password)
+                except AttributeError:
+                    api_key_input.setEchoMode(2)
+            api_key_layout.addWidget(api_key_input)
+            provider_tab_layout.addLayout(api_key_layout)
+            provider_api_inputs[provider_key] = api_key_input
+
+            custom_models_label = QLabel(ui.get("provider_custom_models", "Extra model IDs (one per line):"))
+            provider_tab_layout.addWidget(custom_models_label)
+            custom_models_input = QTextEdit()
+            custom_models_input.setMinimumHeight(90)
+            custom_models_input.setPlainText("\n".join(current_provider_settings.get("custom_models", []) or []))
+            provider_tab_layout.addWidget(custom_models_input)
+            provider_custom_models_inputs[provider_key] = custom_models_input
+
+            info_label = QLabel(provider_instructions.get(provider_key, ""))
+            info_label.setWordWrap(True)
+            info_label.setStyleSheet("color: #666; font-size: 11px;")
+            provider_tab_layout.addWidget(info_label)
+            provider_tab_layout.addStretch(1)
+            provider_tabs.addTab(provider_tab, provider_info["name"])
+
+        providers_layout.addWidget(provider_tabs)
+        tabs.addTab(providers_tab, "Providers")
 
         def update_default_prompt_placeholders():
             lang_key = language_combo.currentData() or "english"
@@ -3853,11 +4370,14 @@ def setup_config_menu():
             custom_template_input.setPlaceholderText(resolved_defaults["analysis_prompt_template"])
             custom_hint_template_input.setPlaceholderText(resolved_defaults["hint_prompt_template"])
 
-        def get_selected_prompt_profile() -> str:
-            return prompt_profile_combo.currentData() or PROMPT_PROFILE_DEFAULT
+        def get_selected_standard_prompt_profile() -> str:
+            return mode_widgets["standard"]["prompt_profile"].currentData() or PROMPT_PROFILE_DEFAULT
+
+        def get_selected_deep_prompt_profile() -> str:
+            return mode_widgets["deep"]["prompt_profile"].currentData() or PROMPT_PROFILE_DEFAULT
 
         def reset_custom_prompts_to_defaults():
-            if get_selected_prompt_profile() != PROMPT_PROFILE_CUSTOM:
+            if not should_show_custom_prompt_fields(get_selected_standard_prompt_profile(), get_selected_deep_prompt_profile()):
                 return
             lang_key = language_combo.currentData() or "english"
             resolved_defaults = resolve_prompt_default_content(lang_key, PROMPT_PROFILE_DEFAULT)
@@ -3866,7 +4386,7 @@ def setup_config_menu():
             custom_hint_template_input.setPlainText(resolved_defaults["hint_prompt_template"])
 
         def update_custom_prompt_inputs():
-            enabled = should_show_custom_prompt_fields(get_selected_prompt_profile())
+            enabled = should_show_custom_prompt_fields(get_selected_standard_prompt_profile(), get_selected_deep_prompt_profile())
             custom_system_label.setVisible(enabled)
             custom_system_input.setVisible(enabled)
             custom_template_label.setVisible(enabled)
@@ -3889,218 +4409,57 @@ def setup_config_menu():
 
         reset_custom_prompt_btn.clicked.connect(reset_custom_prompts_to_defaults)
         language_combo.currentTextChanged.connect(update_default_prompt_placeholders)
+        mode_widgets["standard"]["prompt_profile"].currentIndexChanged.connect(update_custom_prompt_inputs)
+        mode_widgets["deep"]["prompt_profile"].currentIndexChanged.connect(update_custom_prompt_inputs)
         update_default_prompt_placeholders()
-        prompt_profile_combo.currentIndexChanged.connect(update_custom_prompt_inputs)
         update_custom_prompt_inputs()
-        
-        layout.addLayout(general_group)
-        
-        # Onglets pour chaque fournisseur
-        tabs = QTabWidget()
-        
-        # Stockage des widgets pour récupérer les valeurs
-        api_inputs = {}
-        base_url_inputs = {}
-        model_combos = {}
-        builtin_models_by_provider = {}
-        tab_widgets = {}
-        
-        for provider_key, provider_info in PROVIDERS.items():
-            tab = QWidget()
-            tab_layout = QVBoxLayout()
 
-            if provider_key == CUSTOM_OPENAI_PROVIDER:
-                base_url_layout = QHBoxLayout()
-                base_url_layout.addWidget(QLabel(ui.get("base_url", "Base URL:")))
-                base_url_input = QLineEdit(config.get(f"{provider_key}_base_url", ""))
-                base_url_input.setPlaceholderText(ui.get("base_url_placeholder", "http://127.0.0.1:20128/v1"))
-                base_url_layout.addWidget(base_url_input)
-                tab_layout.addLayout(base_url_layout)
-                base_url_inputs[provider_key] = base_url_input
-
-            # Clé API
-            api_key_layout = QHBoxLayout()
-            api_key_label = ui.get("api_key_optional", "API Key (optional):") if provider_key == CUSTOM_OPENAI_PROVIDER else f"{provider_info['name']} API Key:"
-            api_key_layout.addWidget(QLabel(api_key_label))
-            api_key_input = QLineEdit(config.get(f"{provider_key}_api_key", ""))
-            
-            # Compatible avec PyQt5 et PyQt6 pour le mode password
-            try:
-                api_key_input.setEchoMode(QLineEdit.EchoMode.Password)  # PyQt6
-            except AttributeError:
-                try:
-                    api_key_input.setEchoMode(QLineEdit.Password)  # PyQt5
-                except AttributeError:
-                    api_key_input.setEchoMode(2)  # Fallback numérique
-            
-            api_key_layout.addWidget(api_key_input)
-            tab_layout.addLayout(api_key_layout)
-            api_inputs[provider_key] = api_key_input
-            
-            # Modèle
-            model_layout = QHBoxLayout()
-            model_layout.addWidget(QLabel("Model:"))
-            model_combo = QComboBox()
-            builtin_models = list(provider_info["models"])
-            builtin_models_by_provider[provider_key] = set(builtin_models)
-            custom_models = config.get(f"{provider_key}_custom_models", [])
-            if not isinstance(custom_models, list):
-                custom_models = []
-            merged_models = list(builtin_models)
-            for cm in custom_models:
-                cm = str(cm).strip()
-                if cm and cm not in merged_models:
-                    merged_models.append(cm)
-            model_combo.addItems(merged_models)
-            model_combo.setEditable(True)
-            current_model = config.get(f"{provider_key}_model", get_provider_default_model(provider_key))
-            if current_model in merged_models:
-                model_combo.setCurrentText(current_model)
-            else:
-                model_combo.setEditText(current_model)
-            model_layout.addWidget(model_combo)
-            tab_layout.addLayout(model_layout)
-            model_combos[provider_key] = model_combo
-
-            add_model_layout = QHBoxLayout()
-            custom_model_input = QLineEdit()
-            custom_model_input.setPlaceholderText(ui.get("model_id_placeholder", "provider/model-id"))
-            add_model_btn = QPushButton(ui.get("add_model_id", "Add model ID"))
-            add_model_layout.addWidget(custom_model_input)
-            add_model_layout.addWidget(add_model_btn)
-            tab_layout.addLayout(add_model_layout)
-
-            def add_model_id_to_combo(_checked=False, pk=provider_key, inp=custom_model_input):
-                model_id = inp.text().strip()
-                if not model_id:
-                    return
-                combo = model_combos[pk]
-                found = False
-                for i in range(combo.count()):
-                    if combo.itemText(i) == model_id:
-                        found = True
-                        combo.setCurrentIndex(i)
-                        break
-                if not found:
-                    combo.addItem(model_id)
-                    combo.setCurrentText(model_id)
-                inp.clear()
-
-            add_model_btn.clicked.connect(add_model_id_to_combo)
-            
-            # Instructions spécifiques au fournisseur
-            instructions = {
-                "openai": "Get your API key at: https://platform.openai.com/api-keys",
-                "gemini": "Get your API key at: https://aistudio.google.com/app/apikey",
-                "claude": "Get your API key at: https://console.anthropic.com/",
-                "deepseek": "Get your API key at: https://platform.deepseek.com/api_keys",
-                "groq": "Get your API key at: https://console.groq.com/keys",
-                "openrouter": "Get your API key at: https://openrouter.ai/settings/keys\nTip: use openrouter/free for maximum compatibility.",
-                CUSTOM_OPENAI_PROVIDER: "Enter base URL root, for example: http://127.0.0.1:20128/v1\nDo not enter the full /chat/completions endpoint. API key is optional for local routers."
-            }
-            
-            info_label = QLabel(instructions.get(provider_key, ""))
-            info_label.setWordWrap(True)
-            info_label.setStyleSheet("color: #666; font-size: 11px; margin: 10px 0;")
-            tab_layout.addWidget(info_label)
-            
-            tab.setLayout(tab_layout)
-            tabs.addTab(tab, provider_info["name"])
-            tab_widgets[provider_key] = tab
-        
-        layout.addWidget(tabs)
-        
-        # Fonction pour activer/désactiver les onglets selon le fournisseur sélectionné
-        def update_tab_states():
-            selected_provider = provider_combo.currentData()
-            for i, (provider_key, _) in enumerate(PROVIDERS.items()):
-                tab_enabled = (provider_key == selected_provider)
-                tabs.setTabEnabled(i, tab_enabled)
-                if tab_enabled:
-                    tabs.setCurrentIndex(i)
-        
-        # Connecter le changement de fournisseur à la mise à jour des onglets
-        provider_combo.currentTextChanged.connect(update_tab_states)
-        
-        # Initialiser l'état des onglets
-        update_tab_states()
-        
-        # Test de connexion
         test_button = QPushButton(ui["test_api"])
-        layout.addWidget(test_button)
-        
+        providers_layout.addWidget(test_button)
+
         def test_api():
-            current_provider_data = provider_combo.currentData()
-            api_key = api_inputs[current_provider_data].text().strip()
-            selected_model = model_combos[current_provider_data].currentText().strip()
-            base_url = ""
-
-            if current_provider_data == CUSTOM_OPENAI_PROVIDER:
-                base_url = base_url_inputs[current_provider_data].text().strip()
-                if not base_url:
-                    showWarning(ui.get("enter_base_url", "Please enter a base URL to test the connection."))
-                    return
-                if base_url.rstrip("/").lower().endswith("/chat/completions"):
-                    showWarning(ui.get("enter_base_url_root", "Please enter the base URL root, not the full /chat/completions endpoint."))
-                    return
-                if not selected_model:
-                    showWarning(ui.get("enter_model", "Please enter a model ID to test the connection."))
-                    return
-
-            if current_provider_data != CUSTOM_OPENAI_PROVIDER and not api_key:
-                showWarning(ui["enter_api_key"])
+            targets = []
+            for mode_key in ("standard", "deep"):
+                provider_key = mode_widgets[mode_key]["provider"].currentData()
+                model_id = mode_widgets[mode_key]["model"].currentText().strip()
+                if provider_key and model_id:
+                    targets.append((mode_key, provider_key, model_id))
+            if not targets:
+                showInfo(ui.get("no_models_selected", "No model selected. Skipping API test."))
                 return
-            
-            # Changer le texte du bouton pour indiquer le test en cours
+
             original_text = test_button.text()
             test_button.setText(ui["testing"])
             test_button.setEnabled(False)
-            
+
             try:
                 messages = [{"role": "user", "content": "Respond simply 'OK' to test the connection."}]
-                response = call_ai_api(
-                    messages=messages,
-                    provider=current_provider_data,
-                    model=selected_model,
-                    max_tokens=10,
-                    temperature=0.1,
-                    api_key=api_key,
-                    base_url=base_url
-                )
-                showInfo("✅ " + ui["connection_success"].format(provider=PROVIDERS[current_provider_data]["name"], response=response[:50] + "..."))
-            except Exception as e:
-                # OpenRouter models can be intermittently unavailable depending on providers.
-                # Retry with the free router to avoid false-negative config tests.
-                if current_provider_data == "openrouter":
-                    try:
-                        response = call_ai_api(
-                            messages=messages,
-                            provider=current_provider_data,
-                            model="openrouter/free",
-                            max_tokens=10,
-                            temperature=0.1,
-                            api_key=api_key
-                        )
-                        showInfo(
-                            "✅ "
-                            + ui["connection_success"].format(
-                                provider=PROVIDERS[current_provider_data]["name"],
-                                response=response[:50] + "...",
-                            )
-                            + f"\n\nSelected model failed, but fallback 'openrouter/free' worked.\nOriginal error: {str(e)}"
-                        )
+                tested_models = []
+                for mode_key, provider_key, model_id in targets:
+                    api_key = provider_api_inputs.get(provider_key).text().strip() if provider_key in provider_api_inputs else ""
+                    base_url = provider_base_url_inputs.get(provider_key).text().strip() if provider_key in provider_base_url_inputs else ""
+                    if provider_key == CUSTOM_OPENAI_PROVIDER and not base_url:
+                        showWarning(ui.get("enter_base_url", "Please enter a base URL to test the connection."))
                         return
-                    except Exception:
-                        pass
-                showWarning("❌ " + ui["connection_error"].format(provider=PROVIDERS[current_provider_data]["name"], error=str(e)))
+                    response = call_ai_api(
+                        messages=messages,
+                        provider=provider_key,
+                        model=model_id,
+                        max_tokens=10,
+                        temperature=0.1,
+                        api_key=api_key,
+                        base_url=base_url,
+                    )
+                    tested_models.append(f"{mode_key}: {provider_key} / {model_id} ({response[:20].strip()})")
+                showInfo("✅ " + ui["connection_success"].format(provider="multiple providers", response="; ".join(tested_models)))
+            except Exception as e:
+                showWarning("❌ " + str(e))
             finally:
-                # Restaurer le bouton
                 test_button.setText(original_text)
                 test_button.setEnabled(True)
-        
+
         test_button.clicked.connect(test_api)
-        
-        # Boutons
+
         button_layout = QHBoxLayout()
         save_button = QPushButton(ui["save"])
         cancel_button = QPushButton(ui["cancel"])
@@ -4109,53 +4468,65 @@ def setup_config_menu():
         scroll_area.setWidget(content_widget)
         root_layout.addWidget(scroll_area)
         root_layout.addLayout(button_layout)
-        
+
         def save_and_close():
+            providers_block = {}
+            for provider_key in PROVIDERS.keys():
+                provider_block = {
+                    "api_key": provider_api_inputs.get(provider_key).text() if provider_key in provider_api_inputs else "",
+                    "custom_models": parse_provider_custom_models(provider_key),
+                }
+                if provider_key in provider_base_url_inputs:
+                    provider_block["base_url"] = provider_base_url_inputs[provider_key].text().strip()
+                providers_block[provider_key] = provider_block
+
             new_config = {
-                "provider": provider_combo.currentData(),
-                "language": language_combo.currentData(),
-                "enabled": enabled_checkbox.isChecked(),
-                "max_tokens": tokens_spin.value(),
-                "temperature": temp_spin.value(),
-                "prompt_profile": get_selected_prompt_profile(),
+                "general": {
+                    "language": language_combo.currentData(),
+                    "show_anki_compare": show_anki_chk.isChecked(),
+                    "show_code_compare": show_code_chk.isChecked(),
+                },
+                "modes": {
+                    "standard": {
+                        "enabled": mode_widgets["standard"]["enabled"].isChecked(),
+                        "provider": mode_widgets["standard"]["provider"].currentData(),
+                        "model": mode_widgets["standard"]["model"].currentText().strip(),
+                        "prompt_profile": get_selected_standard_prompt_profile(),
+                        "max_tokens": mode_widgets["standard"]["max_tokens"].value(),
+                        "temperature": mode_widgets["standard"]["temperature"].value() / 100.0,
+                    },
+                    "deep": {
+                        "enabled": mode_widgets["deep"]["enabled"].isChecked(),
+                        "provider": mode_widgets["deep"]["provider"].currentData(),
+                        "model": mode_widgets["deep"]["model"].currentText().strip(),
+                        "prompt_profile": get_selected_deep_prompt_profile(),
+                        "max_tokens": mode_widgets["deep"]["max_tokens"].value(),
+                        "temperature": mode_widgets["deep"]["temperature"].value() / 100.0,
+                    },
+                },
+                "providers": providers_block,
+                "ui_language": config.get("ui_language", DEFAULT_CONFIG.get("ui_language", "auto")),
+                "prompt_profile": get_selected_standard_prompt_profile(),
                 "use_custom_prompt": False,
                 "custom_system_prompt": custom_system_input.toPlainText().strip(),
                 "custom_analysis_prompt_template": custom_template_input.toPlainText().strip(),
                 "custom_hint_prompt_template": custom_hint_template_input.toPlainText().strip(),
             }
-            new_config["show_anki_compare"] = show_anki_chk.isChecked()
-            new_config["show_code_compare"] = show_code_chk.isChecked()
-            
-            # Sauvegarder toutes les clés API et modèles
-            for provider_key in PROVIDERS.keys():
-                if provider_key in base_url_inputs:
-                    new_config[f"{provider_key}_base_url"] = base_url_inputs[provider_key].text().strip()
-                new_config[f"{provider_key}_api_key"] = api_inputs[provider_key].text()
-                new_config[f"{provider_key}_model"] = model_combos[provider_key].currentText()
-                custom_list = []
-                combo = model_combos[provider_key]
-                builtin = builtin_models_by_provider.get(provider_key, set())
-                for i in range(combo.count()):
-                    item = combo.itemText(i).strip()
-                    if item and item not in builtin and item not in custom_list:
-                        custom_list.append(item)
-                new_config[f"{provider_key}_custom_models"] = custom_list
-            
+
             save_config(new_config)
+            refresh_open_review_surfaces_after_config_save()
             showInfo(ui["saved"])
             dialog.accept()
-        
+
         save_button.clicked.connect(save_and_close)
         cancel_button.clicked.connect(dialog.reject)
-        
+
         dialog.setLayout(root_layout)
-        
-        # Compatible avec PyQt5 et PyQt6 pour l'exécution
+
         try:
-            dialog.exec()  # PyQt6
+            dialog.exec()
         except AttributeError:
-            dialog.exec_()  # PyQt5
-    
+            dialog.exec_()
     # Ajouter au menu Tools
     action = mw.form.menuTools.addAction(get_config_ui_texts(get_config())["menu_title"])
     action.triggered.connect(open_config)
@@ -4178,14 +4549,45 @@ def regenerate_ai_analysis():
     cache_key = context.get("cache_key")
     expected_provided_tuple = context.get("expected_provided_tuple")
     type_pattern = context.get("type_pattern")
+    analysis_mode = normalize_analysis_mode(context.get("analysis_mode"))
     if not cache_key or not expected_provided_tuple:
         return
     if is_analyzing.get(cache_key, False):
         refresh_ai_analysis()
         return
     invalidate_analysis_state(cache_key)
-    store_ai_analysis(expected_provided_tuple, type_pattern)
+    store_ai_analysis(expected_provided_tuple, type_pattern, analysis_mode=analysis_mode)
     refresh_ai_analysis()
+
+def run_deep_analysis():
+    card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
+    if not should_score_card(card):
+        return
+    context = dict(current_analysis_context)
+    expected_provided_tuple = context.get("expected_provided_tuple")
+    type_pattern = context.get("type_pattern")
+    if not expected_provided_tuple:
+        return
+    store_ai_analysis(expected_provided_tuple, type_pattern, analysis_mode="deep")
+    refresh_ai_analysis()
+
+def show_standard_ai_analysis() -> bool:
+    card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
+    context = dict(current_analysis_context)
+    standard_cache_key = context.get("standard_cache_key")
+    if not standard_cache_key:
+        return False
+    standard_result = analysis_results.get(standard_cache_key) or ai_analysis_cache.get(standard_cache_key)
+    if not standard_result:
+        return False
+    current_analysis_context["cache_key"] = standard_cache_key
+    current_analysis_context["analysis_mode"] = "standard"
+    current_analysis_context["standard_cache_key"] = standard_cache_key
+    expected_provided_tuple = context.get("expected_provided_tuple")
+    if card and expected_provided_tuple:
+        current_analysis_context["analysis_request"] = build_analysis_request(card, expected_provided_tuple[1] or "", "standard")
+    refresh_ai_analysis({"card_id": context.get("card_id"), "cache_key": standard_cache_key})
+    return True
 
 # Enregistrer la commande pour le JavaScript
 def register_refresh_command():
@@ -4203,6 +4605,12 @@ def handle_js_message(handled, message, context):
         return True, None
     if message == "regenerate_ai_analysis":
         regenerate_ai_analysis()
+        return True, None
+    if message == "run_deep_analysis":
+        run_deep_analysis()
+        return True, None
+    if message == "show_standard_ai_analysis":
+        show_standard_ai_analysis()
         return True, None
     if message == "toggle_hint_panel":
         card = mw.reviewer.card if hasattr(mw, "reviewer") and mw.reviewer else None

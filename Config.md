@@ -15,6 +15,7 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 - **Intelligent Answer Evaluation**: AI analyzes your answers semantically, not just text matching
 - **Constructive Feedback**: Provides specific tips to improve your understanding
 - **Refresh analysis action**: Lets you rerun AI feedback when you want a fresh result
+- **Deep Analysis action**: Lets you run stronger manual analysis in same panel when configured
 - **Multi-Language Support**: Works in English, French, Spanish, and German
 - **Multiple AI Providers**: Choose from OpenAI, Google Gemini, Anthropic Claude, DeepSeek, OpenRouter, Groq, or Custom OpenAI-Compatible
 ⚠️ : I tested Google Gemini and OpenRouter using their free evaluation keys.
@@ -29,55 +30,53 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 
 ⚠️ :  <b>After setup config it's mandatory to restart anki<b>
 
-### General Settings
+### Settings Tabs
 
-#### AI Provider
-![config0](/images/config_0.png)
-![config0](/images/config.png)
-- **Purpose**: Choose which AI service to use for analysis
-- **Options**: OpenAI, Google Gemini, Anthropic Claude, DeepSeek, Groq, OpenRouter, Custom OpenAI-Compatible
-- **Default**: OpenAI
-- **Note**: Only the selected provider's tab will be enabled in the configuration
-⚠️ : For basic use, I recommend using a Gemini key, since the free key allows you to run 2 or 3 complete review sessions
+Phase 1 uses four top-level tabs:
 
-#### Language
-- **Purpose**: Set the language for AI feedback and interface
-- **Options**: 
-  - English (default)
-  - Français (French)
-  - Español (Spanish) 
-  - Deutsch (German)
-- **Impact**: Changes AI prompt language and interface text
+#### General
+- **Purpose**: Own shared settings only
+- **Fields**:
+  - Analysis language
+  - Show Anki compare
+  - Show code compare
+  - Shared custom prompt fields
+- **Rule**: This tab does not own provider credentials or mode-specific model choices
 
-#### Enable AI Analysis
-- **Purpose**: Toggle the entire AI analysis feature on/off
-- **Default**: Enabled
-- **When disabled**: Shows standard Anki comparison only
+#### Standard
+- **Purpose**: Own automatic standard-analysis runtime
+- **Fields**:
+  - `Use Standard Analysis`
+  - provider
+  - model
+  - prompt profile
+  - max tokens
+  - temperature
+- **Rule**: standard analysis runs automatically only when this mode stays enabled
 
-#### Feedback Length
-- **Purpose**: Limit the length of AI responses
-- **Range**: 50-4000 tokens
-- **Default**: 200
-- **Impact**: Lower = shorter, faster feedback; higher = more detailed feedback
+#### Deep
+- **Purpose**: Own manual deep-analysis runtime
+- **Fields**:
+  - `Use Deep Analysis`
+  - provider
+  - model
+  - prompt profile
+  - max tokens
+  - temperature
+- **Rule**: deep settings gray out when deep mode is off; review panel shows `Deep Analysis` only when deep mode is enabled and model is non-blank
 
-#### Temperature (0-1)
-- **Purpose**: Control AI creativity/randomness
-- **Range**: 0.0 (deterministic) to 1.0 (creative)
-- **Default**: 0.7
-- **Recommendation**: 0.3-0.7 for educational feedback
+#### Providers
+- **Purpose**: Own provider credentials and provider-level saved extras
+- **Fields**:
+  - API key per provider
+  - base URL for `Custom OpenAI-Compatible`
+  - saved extra model IDs per provider
+- **Rule**: credentials live here only; Standard/Deep reference providers instead of duplicating credentials
 
-#### Default Prompt Profile
-- **Purpose**: Choose evaluation style for scoreable card templates
-- **Options**:
-  - `default`: balanced educational feedback
-  - `strict_stem`: precise grading for numeric/factual answers
-  - `speaking_flexible`: flexible grading for speaking-style responses
-  - `custom`: use your own prompt fields
-
-#### Custom Prompt Fields
-- **Custom system prompt**: shown only when selected profile is `custom`
-- **Custom analysis prompt template**: shown only when selected profile is `custom`
-- **Custom hint prompt template**: shown only when selected profile is `custom`
+#### Shared Custom Prompt Fields
+- **Custom system prompt**: shown when standard or deep profile is `custom`
+- **Custom analysis prompt template**: shown when standard or deep profile is `custom`
+- **Custom hint prompt template**: shown when standard or deep profile is `custom`
 - **Storage**: one global custom prompt trio, not per-language values
 - **Supported variables**:
   - `{question}`
@@ -144,30 +143,33 @@ Each AI provider has its own tab with specific configuration:\n
 
 ## Setup Instructions
 
-### 1. Choose Your AI Provider
+### 1. Configure General
 1. Open Anki
 2. Go to **Tools → AI Multi-Provider Configuration**
-3. Select your preferred AI provider from the dropdown
-4. Notice that only the selected provider's tab is enabled
+3. In `General`, choose analysis language and compare-display options
+4. Fill shared custom prompt fields only if you use `custom` prompt profile
 
-### 2. Configure API Access
-1. Click on the tab for your selected provider
-2. Get an API key from the provider's website (links provided in each tab)
-3. Enter your API key in the field, or for `Custom OpenAI-Compatible` enter base URL root and optional API key
-4. Select your preferred model
-5. Click "Test API Connection" to verify everything works
+### 2. Configure Standard and Deep
+1. In `Standard`, keep `Use Standard Analysis` enabled for automatic scoring
+2. Choose standard provider, model, prompt profile, max tokens, and temperature
+3. In `Deep`, enable `Use Deep Analysis` only if you want manual stronger review
+4. Choose deep provider, model, prompt profile, max tokens, and temperature
 
-### 3. Adjust Settings
-1. Choose your preferred language for feedback
-2. Adjust feedback length if needed (200 is usually sufficient)
-3. Set temperature (0.7 is a good balance)
-4. Click "Save"
+### 3. Configure Providers and Test
+1. In `Providers`, add provider API keys
+2. For `Custom OpenAI-Compatible`, enter base URL root and optional API key
+3. Add extra provider model IDs if you want them remembered in config
+4. Click `Test API Connection` to test every non-blank mode model; blank models are skipped
+5. Click `Save`
 
 ### 4. Start Using
 ![loadspinner](/images/analysis_by_AI.png)
 ![review](/images/very_good.png)
 - Review your flashcards as normal
-- After answering, you'll see both Anki's standard comparison and the AI analysis
+- After answering, you'll see both Anki's standard comparison and automatic standard AI analysis
+- When deep mode is enabled and deep model is configured, the standard panel also shows `Deep Analysis`
+- Deep results render in same panel and can return to cached standard result with `Show standard`
+- Phase 1 does not use NotebookLM or notebook selection
 - The AI provides:
   - A score from 0-10
   - Specific improvement tips

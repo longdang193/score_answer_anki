@@ -12,6 +12,10 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
   - score (0-10) when available
   - improvement tips
   - optional rerun via compact refresh action
+- Keeps one shared `AI Analysis` panel with:
+  - automatic standard analysis on eligible `_score` answer reveal
+  - manual `Deep Analysis` for harder questions
+  - `Show standard` return path from cached deep results
 - Runs analysis in background to keep review flow responsive
 - Supports multiple LLM providers from one config screen
 - Supports multilingual analysis and UI localization
@@ -41,6 +45,19 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
   - displays `N/A` when analysis is unavailable
   - compact refresh action can request a fresh analysis
 
+## Analysis Modes
+
+- **Standard AI Analysis**:
+  - runs automatically on eligible `_score` answer reveal
+  - uses selected provider model plus `Standard prompt profile`
+- **Deep Analysis**:
+  - runs only when you click `Deep Analysis`
+  - uses selected provider `Deep model` plus `Deep prompt profile`
+  - renders in same `AI Analysis` panel and can return to cached standard result
+- **Phase 1 scope**:
+  - NotebookLM is not used
+  - no notebook selector or notebook context is involved
+
 ## Supported Languages
 
 Analysis feedback and UI labels currently support:
@@ -65,11 +82,12 @@ Analysis feedback and UI labels currently support:
 ![Config access from Tools](images/config_botton_from_tools.png)
 
 1. Open `Tools -> AI Multi-Provider Configuration`.
-2. Select provider and model.
-3. Add your API key, or for `Custom OpenAI-Compatible` enter base URL + model and leave API key blank if your local router does not need one.
-4. Click `Test API Connection`.
-5. Select `Analysis language`.
-6. Save and review your `type:` cards as usual.
+2. In `General`, choose `Analysis language` and compare-display options.
+3. In `Standard`, keep `Use Standard Analysis` enabled and choose provider, model, prompt profile, max tokens, and temperature.
+4. In `Deep`, enable `Use Deep Analysis` only if you want manual deep review, then choose provider, model, prompt profile, max tokens, and temperature.
+5. In `Providers`, add provider credentials, base URL for `Custom OpenAI-Compatible`, and any extra model IDs you want remembered.
+6. Click `Test API Connection` to test every non-blank mode model; blank model fields are skipped.
+7. Save and review your `type:` cards as usual.
 
 ## Question and Answer Variants
 
@@ -104,45 +122,52 @@ V1 limits:
 
 ## Configuration Guide
 
-### General Settings
+### Settings Tabs
 
-- **AI Provider**: active provider used for analysis
+Phase 1 uses four top-level tabs:
+
+- **General**: shared analysis language, compare-display toggles, shared custom prompt fields
+- **Standard**: standard-mode enable flag plus provider, model, prompt profile, max tokens, and temperature
+- **Deep**: deep-mode enable flag plus provider, model, prompt profile, max tokens, and temperature
+- **Providers**: provider-owned credentials, `Custom OpenAI-Compatible` base URL, and saved extra model IDs
+
+### General Tab
+
 - **Analysis language**: language for AI feedback (`tips`) and prompt intent
-- **Enable AI analysis**: global on/off
-- **Feedback length**: max AI response length (`lower = shorter, faster feedback`)
-- **Temperature**: response creativity/variance
 - **Show Anki compare**: toggle native Anki comparison block
 - **Show code compare**: toggle side-by-side extracted text comparison
-
-### Prompt Profiles
-
-- **Default prompt profile**:
-  - `default`: balanced educational feedback
-  - `strict_stem`: precise STEM grading; emphasizes numeric result, sign, unit, and completeness
-  - `speaking_flexible`: speaking-oriented grading; emphasizes communicative adequacy and allows alternative valid responses
-  - `custom`: uses your own prompt text fields
-- **Custom system prompt**: shown only when selected profile is `custom`; stored as one global field
-- **Custom analysis prompt template**: shown only when selected profile is `custom`; stored as one global field; supports:
+- **Custom system prompt**: shared global field, shown when standard or deep profile is `custom`
+- **Custom analysis prompt template**: shared global field, shown when standard or deep profile is `custom`; supports:
   - `{question}`
   - `{expected_answer}`
   - `{accepted_answers}`
   - `{user_answer}`
   - `{language}`
-- **Custom hint prompt template**: shown only when selected profile is `custom`; stored as one global field; supports:
+- **Custom hint prompt template**: shown when selected profile is `custom`; stored as one global field; supports:
   - `{question}`
   - `{expected_answer}`
   - `{hint}`
   - `{language}`
-- **Reset prompts to defaults**: resets custom fields for `custom` profile using selected analysis language
+- **Reset prompts to defaults**: resets shared custom fields using selected analysis language defaults
 
-### Provider Tabs
+### Standard / Deep Tabs
+
+- **Use Standard Analysis**: gates automatic standard analysis on `_score` answer reveal
+- **Use Deep Analysis**: gates manual `Deep Analysis` action in review panel
+- **Provider**: mode-owned provider choice
+- **Model**: mode-owned model ID; editable, no silent deep fallback
+- **Prompt profile**: supports `default`, `strict_stem`, `speaking_flexible`, `cloze_recall`, and `custom`
+- **Feedback length**: mode-owned `max_tokens`
+- **Temperature**: mode-owned response variance
+- **Deep Analysis button rule**: appears only when deep mode is enabled and deep model is non-blank
+
+### Providers Tab
 
 Each provider tab includes:
 
 - API key field
-- model selector
-- editable model field
-- `Add model ID` input/button to append custom model IDs
+- saved extra model IDs field
+- provider instructions / key URL
 
 `Custom OpenAI-Compatible` also includes:
 
@@ -150,10 +175,7 @@ Each provider tab includes:
 - validation that rejects full `/chat/completions` endpoint input
 - optional API key support for local routers
 
-Custom model IDs are saved per provider in config and restored on restart.
-
-> Always test a model ID before using it in real reviews.  
-> Some models may intermittently fail or be temporarily unavailable for unknown provider-side reasons.
+`Test API Connection` tests both current mode models when they are non-blank. Blank mode models are skipped.
 
 ## OpenRouter Notes
 
@@ -163,7 +185,7 @@ Recommended defaults:
 
 - `openrouter/free` for highest compatibility
 - use specific `:free` variants only when needed
-- always run `Test API Connection` after changing model ID
+- always run `Test API Connection` after changing provider, `Standard model`, or `Deep model`
 
 If selected model test fails, the add-on may successfully validate via `openrouter/free` fallback.
 
@@ -189,7 +211,7 @@ If selected model test fails, the add-on may successfully validate via `openrout
 - Base URL: `http://127.0.0.1:20128/v1`
 - Model: your router model ID
 - API key: leave blank if your local router does not require auth
-- Then run `Test API Connection`
+- Then run `Test API Connection` to verify selected standard/deep models
 
 ### Always getting English feedback
 

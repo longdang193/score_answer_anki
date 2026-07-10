@@ -154,9 +154,9 @@ def read_addon_source() -> str:
     return pathlib.Path(__file__).with_name("__init__.py").read_text(encoding="utf-8")
 
 
-def build_current_analysis_cache_key(addon, card, user_answer: str, config=None) -> str:
+def build_current_analysis_cache_key(addon, card, user_answer: str, config=None, analysis_mode: str = "standard") -> str:
     payload = addon.build_analysis_prompt_payload(card, user_answer)
-    runtime = addon.resolve_ai_runtime_config(config or addon.get_config())
+    runtime = addon.resolve_ai_runtime_config(config or addon.get_config(), analysis_mode=analysis_mode)
     return addon.build_analysis_cache_key(
         payload["question_text"],
         payload["canonical_answer"],
@@ -166,6 +166,9 @@ def build_current_analysis_cache_key(addon, card, user_answer: str, config=None)
         language=runtime["language"],
         provider=runtime["provider"],
         model=runtime["model"],
+        analysis_mode=runtime["analysis_mode"],
+        max_tokens=runtime["max_tokens"],
+        temperature=runtime["temperature"],
         accepted_answers=payload["accepted_answers"],
         resolved_prompt_contract=addon.build_prompt_contract_hash(
             runtime["config"], runtime["language"], runtime["prompt_profile"], "analysis"
@@ -188,7 +191,38 @@ def main():
 
     merged_legacy = addon.merge_config_with_defaults({"use_custom_prompt": True})
     assert merged_legacy["prompt_profile"] == "custom"
+    assert merged_legacy["general"]["language"] == "english"
+    assert merged_legacy["general"]["show_anki_compare"] is True
+    assert merged_legacy["general"]["show_code_compare"] is True
+    assert merged_legacy["modes"]["standard"]["prompt_profile"] == "custom"
+    assert merged_legacy["modes"]["deep"]["prompt_profile"] == "custom"
+    assert merged_legacy["modes"]["deep"]["enabled"] is False
+    assert merged_legacy["modes"]["deep"]["model"] == ""
+    assert merged_legacy["providers"]["custom_openai"]["base_url"] == ""
     assert merged_legacy["custom_hint_prompt_template"] == ""
+
+    merged_from_prompt_profile = addon.merge_config_with_defaults({"prompt_profile": "strict_stem"})
+    assert merged_from_prompt_profile["modes"]["standard"]["prompt_profile"] == "strict_stem"
+    assert merged_from_prompt_profile["modes"]["deep"]["prompt_profile"] == "strict_stem"
+
+    merged_explicit_modes = addon.merge_config_with_defaults(
+        {
+            "provider": "custom_openai",
+            "prompt_profile": "default",
+            "standard_prompt_profile": "strict_stem",
+            "deep_prompt_profile": "speaking_flexible",
+            "deep_analysis_model": "gpt-5.4",
+            "max_tokens": 123,
+            "temperature": 0.4,
+        }
+    )
+    assert merged_explicit_modes["modes"]["standard"]["provider"] == "custom_openai"
+    assert merged_explicit_modes["modes"]["deep"]["provider"] == "custom_openai"
+    assert merged_explicit_modes["modes"]["standard"]["prompt_profile"] == "strict_stem"
+    assert merged_explicit_modes["modes"]["deep"]["prompt_profile"] == "speaking_flexible"
+    assert merged_explicit_modes["modes"]["deep"]["model"] == "gpt-5.4"
+    assert merged_explicit_modes["modes"]["standard"]["max_tokens"] == 123
+    assert merged_explicit_modes["modes"]["deep"]["max_tokens"] == 123
     assert addon.resolve_prompt_profile({"prompt_profile": "default"}) == "default"
     assert addon.resolve_prompt_profile(
         {
@@ -227,7 +261,36 @@ def main():
 
     addon.save_config(
         {
-            "prompt_profile": "strict_stem",
+            "general": {
+                "language": "english",
+                "show_anki_compare": True,
+                "show_code_compare": True,
+            },
+            "modes": {
+                "standard": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.4-mini",
+                    "prompt_profile": "strict_stem",
+                    "max_tokens": 100,
+                    "temperature": 0.7,
+                },
+                "deep": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.5",
+                    "prompt_profile": "speaking_flexible",
+                    "max_tokens": 300,
+                    "temperature": 0.4,
+                },
+            },
+            "providers": {
+                "custom_openai": {
+                    "base_url": "http://127.0.0.1:20128/v1",
+                    "api_key": "",
+                    "custom_models": ["cx/gpt-5.4-mini", "cx/gpt-5.5"],
+                }
+            },
             "template_prompt_profile_overrides": {"card_1_score": "strict_stem"},
             "use_custom_prompt": True,
             "custom_system_prompt": "System custom",
@@ -235,7 +298,12 @@ def main():
             "custom_hint_prompt_template": "Hint Q={question} A={expected_answer}",
         }
     )
-    assert mw.addonManager.config["prompt_profile"] == "strict_stem"
+    assert mw.addonManager.config["general"]["language"] == "english"
+    assert mw.addonManager.config["modes"]["standard"]["prompt_profile"] == "strict_stem"
+    assert mw.addonManager.config["modes"]["deep"]["prompt_profile"] == "speaking_flexible"
+    assert mw.addonManager.config["modes"]["standard"]["model"] == "cx/gpt-5.4-mini"
+    assert mw.addonManager.config["modes"]["deep"]["model"] == "cx/gpt-5.5"
+    assert mw.addonManager.config["providers"]["custom_openai"]["base_url"] == "http://127.0.0.1:20128/v1"
     assert mw.addonManager.config["use_custom_prompt"] is False
     assert mw.addonManager.config["custom_hint_prompt_template"] == "Hint Q={question} A={expected_answer}"
     assert "template_prompt_profile_overrides" not in mw.addonManager.config
@@ -275,7 +343,10 @@ def main():
     assert resolved_custom["analysis_prompt_template"] == "Q={question} A={expected_answer} U={user_answer}"
     assert resolved_custom["hint_prompt_template"] == "Hint for Q={question} A={expected_answer} H={hint}"
 
-    assert max(addon.get_config()["max_tokens"], 100) >= 200
+    current_config = addon.get_config()
+    assert current_config["max_tokens"] == 100
+    assert current_config["modes"]["standard"]["max_tokens"] == 100
+    assert current_config["modes"]["deep"]["max_tokens"] == 300
 
     assert hasattr(addon, "build_analysis_cache_key")
     cache_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "2")
@@ -410,6 +481,43 @@ def main():
     assert addon.build_custom_system_placeholder(
         {"custom_system_placeholder": "If empty, language default system prompt is used."}
     ) == "If empty, language default system prompt is used."
+    assert addon.should_show_custom_prompt_fields("default", "default") is False
+    assert addon.should_show_custom_prompt_fields("custom", "default") is True
+    assert addon.should_show_custom_prompt_fields("default", "custom") is True
+    assert "General" in source
+    assert "Standard" in source
+    assert "Deep" in source
+    assert "Providers" in source
+    assert "Use Deep Analysis" in source
+    assert "Use Standard Analysis" in source
+    assert "class TemperatureSpinBox(QSpinBox):" in source
+    assert "temp_spin = TemperatureSpinBox()" in source
+    assert "temp_spin = QDoubleSpinBox()" not in source
+    assert "def configure_numeric_spinbox(" in source
+    assert "QDoubleSpinBox::up-button" not in source
+    assert "QDoubleSpinBox::down-button" not in source
+    assert "QDoubleSpinBox::up-arrow" not in source
+    assert "QDoubleSpinBox::down-arrow" not in source
+    assert source.count("configure_numeric_spinbox(") >= 2
+    assert "providers_layout.addWidget(test_button)" in source
+    assert "`n        layout.addWidget(test_button)`n" not in source
+    assert "Standard model:" not in source
+    assert "Deep model:" not in source
+    assert "🧠" not in source
+    assert hasattr(addon, "refresh_open_review_surfaces_after_config_save")
+    analysis_refresh_calls = []
+    hint_refresh_calls = []
+    original_refresh_ai_analysis = addon.refresh_ai_analysis
+    original_refresh_current_front_hint_panel = addon.refresh_current_front_hint_panel
+    addon.refresh_ai_analysis = lambda *args, **kwargs: analysis_refresh_calls.append((args, kwargs))
+    addon.refresh_current_front_hint_panel = lambda *args, **kwargs: hint_refresh_calls.append((args, kwargs))
+    addon.refresh_open_review_surfaces_after_config_save()
+    addon.refresh_ai_analysis = original_refresh_ai_analysis
+    addon.refresh_current_front_hint_panel = original_refresh_current_front_hint_panel
+    assert analysis_refresh_calls
+    assert hint_refresh_calls
+    save_block = source.split("def save_and_close():", 1)[1].split("save_button.clicked.connect(save_and_close)", 1)[0]
+    assert "refresh_open_review_surfaces_after_config_save()" in save_block
     assert "dialog.resize(760, 900)" not in read_addon_source()
 
     mismatch = addon.make_variant_mismatch_result("Variant mismatch", "english")
@@ -451,6 +559,92 @@ def main():
     assert "What did you do over the weekend?" in rendered_structured
     assert rendered_structured.count("AI Analysis") == 1
     assert r"\(x^2 = 4\)" in rendered_structured
+
+    panel_config_before = dict(mw.addonManager.config)
+    addon.save_config(
+        {
+            "general": {
+                "language": "english",
+                "show_anki_compare": True,
+                "show_code_compare": True,
+            },
+            "modes": {
+                "standard": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.4-mini",
+                    "prompt_profile": "strict_stem",
+                    "max_tokens": 100,
+                    "temperature": 0.7,
+                },
+                "deep": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.5",
+                    "prompt_profile": "speaking_flexible",
+                    "max_tokens": 300,
+                    "temperature": 0.4,
+                },
+            },
+            "providers": {
+                "custom_openai": {
+                    "base_url": "http://127.0.0.1:20128/v1",
+                    "api_key": "",
+                    "custom_models": ["cx/gpt-5.4-mini", "cx/gpt-5.5"],
+                }
+            },
+        }
+    )
+    standard_panel_key = "standard-panel-key"
+    deep_panel_key = "deep-panel-key"
+    addon.analysis_results[standard_panel_key] = {"scored": True, "score": 7, "tips": "Good.", "analysis_mode": "standard", "standard_cache_key": standard_panel_key}
+    addon.analysis_results[deep_panel_key] = {"scored": True, "score": 6, "tips": "Think deeper.", "analysis_mode": "deep", "standard_cache_key": standard_panel_key}
+    addon.current_analysis_context.update({"card_id": mw.reviewer.card.id, "cache_key": standard_panel_key, "analysis_mode": "standard", "standard_cache_key": standard_panel_key})
+    rendered_standard_panel = addon.build_ai_analysis_panel_html(standard_panel_key, "english")
+    assert "Deep Analysis" in rendered_standard_panel
+    assert "Show standard" not in rendered_standard_panel
+    assert 'data-analysis-mode="standard"' in rendered_standard_panel
+    addon.current_analysis_context.update({"card_id": mw.reviewer.card.id, "cache_key": deep_panel_key, "analysis_mode": "deep", "standard_cache_key": standard_panel_key})
+    rendered_deep_panel = addon.build_ai_analysis_panel_html(deep_panel_key, "english")
+    assert "Deep Analysis" not in rendered_deep_panel
+    assert "Show standard" in rendered_deep_panel
+    assert 'data-analysis-mode="deep"' in rendered_deep_panel
+    addon.save_config({
+        "enabled": True,
+        "language": "english",
+        "provider": "openai",
+        "openai_api_key": "token",
+        "openai_model": "gpt-4.1-mini",
+        "standard_prompt_profile": "strict_stem",
+        "deep_prompt_profile": "speaking_flexible",
+        "deep_analysis_model": "   ",
+    })
+    rendered_standard_panel_without_deep = addon.build_ai_analysis_panel_html(standard_panel_key, "english")
+    assert "Deep Analysis" not in rendered_standard_panel_without_deep
+    addon.save_config(panel_config_before)
+    addon.current_analysis_context.update({
+        "card_id": mw.reviewer.card.id,
+        "cache_key": standard_panel_key,
+        "analysis_mode": "standard",
+        "standard_cache_key": standard_panel_key,
+        "expected_provided_tuple": ("221", "17"),
+        "type_pattern": "[[type:Back]]",
+    })
+    handled, _ = addon.handle_js_message((False, None), "run_deep_analysis", None)
+    assert handled is True
+    assert addon.current_analysis_context["analysis_mode"] == "deep"
+    addon.current_analysis_context.update({
+        "card_id": mw.reviewer.card.id,
+        "cache_key": deep_panel_key,
+        "analysis_mode": "deep",
+        "standard_cache_key": standard_panel_key,
+        "expected_provided_tuple": ("221", "17"),
+        "type_pattern": "[[type:Back]]",
+    })
+    handled, _ = addon.handle_js_message((False, None), "show_standard_ai_analysis", None)
+    assert handled is True
+    assert addon.current_analysis_context["analysis_mode"] == "standard"
+    assert addon.current_analysis_context["cache_key"] == standard_panel_key
 
     exact_match_cache_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "I visited my grandmother.")
     addon.call_ai_api = lambda **kwargs: '{\n  "score": 1,\n  "tips": "Too low.",\n  "sample_answers": ["I visited my grandmother."],\n  "question_variants": []\n}'
@@ -525,6 +719,251 @@ def main():
     assert payload["canonical_answer"] == "221"
     assert payload["accepted_answers"] == ["221", "two hundred twenty-one", "221.0"]
     assert payload["user_answer"] == "17"
+
+    previous_config = dict(mw.addonManager.config)
+    addon.save_config(
+        {
+            "general": {
+                "language": "english",
+                "show_anki_compare": True,
+                "show_code_compare": True,
+            },
+            "modes": {
+                "standard": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.4-mini",
+                    "prompt_profile": "strict_stem",
+                    "max_tokens": 100,
+                    "temperature": 0.7,
+                },
+                "deep": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.5",
+                    "prompt_profile": "speaking_flexible",
+                    "max_tokens": 300,
+                    "temperature": 0.4,
+                },
+            },
+            "providers": {
+                "custom_openai": {
+                    "base_url": "http://127.0.0.1:20128/v1",
+                    "api_key": "",
+                    "custom_models": ["cx/gpt-5.4-mini", "cx/gpt-5.5"],
+                }
+            },
+        }
+    )
+    assert hasattr(addon, "build_analysis_request")
+    standard_request = addon.build_analysis_request(mw.reviewer.card, "17", "standard")
+    deep_request = addon.build_analysis_request(mw.reviewer.card, "17", "deep")
+    assert standard_request["analysis_mode"] == "standard"
+    assert deep_request["analysis_mode"] == "deep"
+    assert standard_request["question_text"] == deep_request["question_text"] == "13 * 17 = ?"
+    assert standard_request["canonical_answer"] == deep_request["canonical_answer"] == "221"
+    assert standard_request["accepted_answers"] == deep_request["accepted_answers"] == ["221", "two hundred twenty-one", "221.0"]
+    assert standard_request["provider"] == deep_request["provider"] == "custom_openai"
+    assert standard_request["model"] == "cx/gpt-5.4-mini"
+    assert deep_request["model"] == "cx/gpt-5.5"
+    assert standard_request["prompt_profile"] == "strict_stem"
+    assert deep_request["prompt_profile"] == "speaking_flexible"
+    assert standard_request["max_tokens"] == 100
+    assert deep_request["max_tokens"] == 300
+    assert standard_request["temperature"] == 0.7
+    assert deep_request["temperature"] == 0.4
+    assert standard_request["use_notebooklm"] is False
+    assert deep_request["use_notebooklm"] is False
+    assert standard_request["notebook_id"] == deep_request["notebook_id"] == ""
+    assert standard_request["context_sources"] == deep_request["context_sources"] == []
+    standard_mode_cache_key = addon.build_analysis_cache_key(
+        standard_request["question_text"],
+        standard_request["canonical_answer"],
+        standard_request["user_answer"],
+        card_id=getattr(mw.reviewer.card, "id", None),
+        card_ord=getattr(mw.reviewer.card, "ord", None),
+        language=standard_request["language"],
+        provider=standard_request["provider"],
+        model=standard_request["model"],
+        accepted_answers=standard_request["accepted_answers"],
+        resolved_prompt_contract=addon.build_prompt_contract_hash(
+            addon.get_config(),
+            standard_request["language"],
+            standard_request["prompt_profile"],
+            "analysis",
+        ),
+        analysis_mode=standard_request["analysis_mode"],
+        analysis_prompt_version=addon.ANALYSIS_PROMPT_VERSION,
+    )
+    deep_mode_cache_key = addon.build_analysis_cache_key(
+        deep_request["question_text"],
+        deep_request["canonical_answer"],
+        deep_request["user_answer"],
+        card_id=getattr(mw.reviewer.card, "id", None),
+        card_ord=getattr(mw.reviewer.card, "ord", None),
+        language=deep_request["language"],
+        provider=deep_request["provider"],
+        model=deep_request["model"],
+        accepted_answers=deep_request["accepted_answers"],
+        resolved_prompt_contract=addon.build_prompt_contract_hash(
+            addon.get_config(),
+            deep_request["language"],
+            deep_request["prompt_profile"],
+            "analysis",
+        ),
+        analysis_mode=deep_request["analysis_mode"],
+        analysis_prompt_version=addon.ANALYSIS_PROMPT_VERSION,
+    )
+    assert standard_mode_cache_key != deep_mode_cache_key
+    addon.save_config(
+        {
+            "general": {
+                "language": "english",
+                "show_anki_compare": True,
+                "show_code_compare": True,
+            },
+            "modes": {
+                "standard": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.4-mini",
+                    "prompt_profile": "strict_stem",
+                    "max_tokens": 100,
+                    "temperature": 0.7,
+                },
+                "deep": {
+                    "enabled": False,
+                    "provider": "custom_openai",
+                    "model": "   ",
+                    "prompt_profile": "speaking_flexible",
+                    "max_tokens": 300,
+                    "temperature": 0.4,
+                },
+            },
+            "providers": {
+                "custom_openai": {
+                    "base_url": "http://127.0.0.1:20128/v1",
+                    "api_key": "",
+                    "custom_models": ["cx/gpt-5.4-mini"],
+                }
+            },
+        }
+    )
+    blank_deep_runtime = addon.resolve_ai_runtime_config(addon.get_config(), analysis_mode="deep")
+    assert blank_deep_runtime["analysis_mode"] == "deep"
+    assert blank_deep_runtime["model"] == ""
+    assert blank_deep_runtime["availability_reason"] == "Deep analysis disabled"
+    addon.save_config(
+        {
+            "general": {
+                "language": "english",
+                "show_anki_compare": True,
+                "show_code_compare": True,
+            },
+            "modes": {
+                "standard": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.4-mini",
+                    "prompt_profile": "strict_stem",
+                    "max_tokens": 100,
+                    "temperature": 0.7,
+                },
+                "deep": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "   ",
+                    "prompt_profile": "speaking_flexible",
+                    "max_tokens": 300,
+                    "temperature": 0.4,
+                },
+            },
+            "providers": {
+                "custom_openai": {
+                    "base_url": "http://127.0.0.1:20128/v1",
+                    "api_key": "",
+                    "custom_models": ["cx/gpt-5.4-mini"],
+                }
+            },
+        }
+    )
+    blank_deep_model_runtime = addon.resolve_ai_runtime_config(addon.get_config(), analysis_mode="deep")
+    assert blank_deep_model_runtime["analysis_mode"] == "deep"
+    assert blank_deep_model_runtime["model"] == ""
+    assert blank_deep_model_runtime["availability_reason"] == "Deep analysis model not configured"
+    addon.save_config(
+        {
+            "enabled": True,
+            "language": "english",
+            "provider": "openai",
+            "openai_api_key": "token",
+            "provider": "custom_openai",
+            "custom_openai_base_url": "http://127.0.0.1:20128/v1",
+            "custom_openai_api_key": "",
+            "custom_openai_model": "cx/gpt-5.4-mini",
+            "standard_prompt_profile": "strict_stem",
+            "deep_prompt_profile": "speaking_flexible",
+            "custom_openai_deep_model": "cx/gpt-5.5",
+        }
+    )
+    install_sync_background(mw)
+    api_calls = []
+    addon.call_ai_api = lambda **kwargs: api_calls.append(kwargs) or '{"score": 6, "tips": "Think deeper.", "sample_answers": ["221"], "question_variants": ["17 * 13 = ?"]}'
+    standard_request = addon.build_analysis_request(mw.reviewer.card, "17", "standard")
+    deep_request = addon.build_analysis_request(mw.reviewer.card, "17", "deep")
+    standard_cache_key = addon.build_analysis_cache_key(
+        standard_request["question_text"],
+        standard_request["canonical_answer"],
+        standard_request["user_answer"],
+        card_id=getattr(mw.reviewer.card, "id", None),
+        card_ord=getattr(mw.reviewer.card, "ord", None),
+        language=standard_request["language"],
+        provider=standard_request["provider"],
+        model=standard_request["model"],
+        analysis_mode=standard_request["analysis_mode"],
+        max_tokens=standard_request["max_tokens"],
+        temperature=standard_request["temperature"],
+        accepted_answers=standard_request["accepted_answers"],
+        resolved_prompt_contract=addon.build_prompt_contract_hash(
+            addon.get_config(),
+            standard_request["language"],
+            standard_request["prompt_profile"],
+            "analysis",
+        ),
+        analysis_prompt_version=addon.ANALYSIS_PROMPT_VERSION,
+    )
+    deep_cache_key = addon.build_analysis_cache_key(
+        deep_request["question_text"],
+        deep_request["canonical_answer"],
+        deep_request["user_answer"],
+        card_id=getattr(mw.reviewer.card, "id", None),
+        card_ord=getattr(mw.reviewer.card, "ord", None),
+        language=deep_request["language"],
+        provider=deep_request["provider"],
+        model=deep_request["model"],
+        analysis_mode=deep_request["analysis_mode"],
+        max_tokens=deep_request["max_tokens"],
+        temperature=deep_request["temperature"],
+        accepted_answers=deep_request["accepted_answers"],
+        resolved_prompt_contract=addon.build_prompt_contract_hash(
+            addon.get_config(),
+            deep_request["language"],
+            deep_request["prompt_profile"],
+            "analysis",
+        ),
+        analysis_prompt_version=addon.ANALYSIS_PROMPT_VERSION,
+    )
+    addon.store_ai_analysis(("221", "17"), "[[type:Back]]", analysis_mode="deep")
+    assert api_calls[-1]["model"] == "cx/gpt-5.5"
+    assert addon.current_analysis_context["analysis_mode"] == "deep"
+    assert addon.current_analysis_context["cache_key"] == deep_cache_key
+    assert addon.current_analysis_context["standard_cache_key"] == standard_cache_key
+    assert addon.analysis_results[deep_cache_key]["score"] == 6
+    addon.regenerate_ai_analysis()
+    assert api_calls[-1]["model"] == "cx/gpt-5.5"
+    assert addon.current_analysis_context["analysis_mode"] == "deep"
+    assert addon.current_analysis_context["cache_key"] == deep_cache_key
+    addon.save_config(previous_config)
 
     plain_card = DummyCard(model_name="card_1")
     mw.reviewer.card = plain_card
@@ -960,6 +1399,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
