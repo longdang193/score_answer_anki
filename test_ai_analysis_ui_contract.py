@@ -43,8 +43,18 @@ class DummyNote(dict):
             "Front_variants": "17 * 13 = ?",
             "Back": "221",
             "Back_variants": "two hundred twenty-one;;221.0",
+            "Hint": "Base hint",
+            "Back2": "",
+            "Back2_variants": "",
+            "Hint2": "Second hint",
+            "Back3": "",
+            "Back3_variants": "",
+            "Hint3": "Third hint",
+            "Back4": "",
+            "Back4_variants": "",
+            "Hint4": "Fourth hint",
         })
-        self._model = {"name": model_name, "tmpls": [{"name": template_name}]}
+        self._model = {"name": model_name, "tmpls": [{"name": template_name} for _ in range(4)]}
 
     def model(self):
         return self._model
@@ -144,6 +154,25 @@ def read_addon_source() -> str:
     return pathlib.Path(__file__).with_name("__init__.py").read_text(encoding="utf-8")
 
 
+def build_current_analysis_cache_key(addon, card, user_answer: str, config=None) -> str:
+    payload = addon.build_analysis_prompt_payload(card, user_answer)
+    runtime = addon.resolve_ai_runtime_config(config or addon.get_config())
+    return addon.build_analysis_cache_key(
+        payload["question_text"],
+        payload["canonical_answer"],
+        user_answer,
+        card_id=getattr(card, "id", None),
+        card_ord=getattr(card, "ord", None),
+        language=runtime["language"],
+        provider=runtime["provider"],
+        model=runtime["model"],
+        accepted_answers=payload["accepted_answers"],
+        resolved_prompt_contract=addon.build_prompt_contract_hash(
+            runtime["config"], runtime["language"], runtime["prompt_profile"], "analysis"
+        ),
+        analysis_prompt_version=addon.ANALYSIS_PROMPT_VERSION,
+    )
+
 def main():
     addon, mw = load_addon_module()
     source = read_addon_source()
@@ -167,6 +196,34 @@ def main():
             "template_prompt_profile_overrides": {"card_1_score": "strict_stem"},
         }
     ) == "default"
+
+    assert set(addon.HINT_UI_TEXTS.keys()) == set(addon.LANGUAGES.keys())
+    assert set(addon.AI_UI_TEXTS.keys()) == set(addon.LANGUAGES.keys())
+    assert set(addon.LANG_TO_LABELS.keys()) == set(addon.LANGUAGES.keys())
+    assert addon.LANGUAGES["english"]["display_name"] == "English"
+    assert addon.LANGUAGES["english"]["instruction_name"] == "English"
+    assert addon.LANGUAGES["french"]["display_name"] == "Français"
+    assert addon.LANGUAGES["french"]["instruction_name"] == "French"
+    assert set(addon.LANGUAGE_REGISTRY) == set(addon.LANGUAGES) == set(addon.HINT_UI_TEXTS) == set(addon.AI_UI_TEXTS) == set(addon.LANG_TO_LABELS)
+    assert addon.get_hint_ui_texts("french") == addon.LANGUAGE_REGISTRY["french"]["hint_ui"]
+    assert addon.get_ai_ui_texts("french") == addon.LANGUAGE_REGISTRY["french"]["ai_ui"]
+    assert addon.get_compare_labels({"language": "french"}) == addon.LANGUAGE_REGISTRY["french"]["compare_labels"]
+    assert hasattr(addon, 'get_supported_language_options')
+    language_options = addon.get_supported_language_options()
+    assert language_options[0] == ('english', addon.LANGUAGE_REGISTRY['english']['ui']['display_name'])
+    assert ('french', addon.LANGUAGE_REGISTRY['french']['ui']['display_name']) in language_options
+    assert addon.get_language_name('french') == addon.LANGUAGE_REGISTRY['french']['ui']['instruction_name']
+
+
+    fr_review_labels = addon.get_compare_labels({"language": "french", "ui_language": "en"})
+    en_config_texts = addon.get_config_ui_texts({"language": "french", "ui_language": "en"})
+    assert fr_review_labels["expected"] == addon.LANG_TO_LABELS["french"]["expected"]
+    assert en_config_texts == addon.CONFIG_UI_TEXTS["en"]
+
+    for language_key in sorted(set(addon.LANGUAGES.keys()) - {"english"}):
+        ai_texts = addon.get_ai_ui_texts(language_key)
+        assert ai_texts["ai_analysis_sample_answers"] != "Sample Answers"
+        assert ai_texts["ai_analysis_question_variants"] != "Alternative Questions"
 
     addon.save_config(
         {
@@ -194,6 +251,16 @@ def main():
     assert resolved_default["analysis_prompt_template"]
     assert resolved_default["hint_prompt_template"]
 
+    assert hasattr(addon, "resolve_prompt_default_content")
+    resolved_file_default = addon.resolve_prompt_default_content("english", "default")
+    assert resolved_default == resolved_file_default
+    assert addon.resolve_prompt_default_content("english", "not-supported") == resolved_file_default
+
+    placeholder_block = source.split("def update_default_prompt_placeholders():", 1)[1].split("def get_selected_prompt_profile()", 1)[0]
+    reset_block = source.split("def reset_custom_prompts_to_defaults():", 1)[1].split("def update_custom_prompt_inputs():", 1)[0]
+    assert "resolve_prompt_default_content(" in placeholder_block
+    assert "resolve_prompt_default_content(" in reset_block
+
     resolved_custom = addon.resolve_prompt_profile_content(
         {
             "prompt_profile": "custom",
@@ -211,7 +278,7 @@ def main():
     assert max(addon.get_config()["max_tokens"], 100) >= 200
 
     assert hasattr(addon, "build_analysis_cache_key")
-    cache_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "2")
+    cache_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "2")
     addon.ai_analysis_cache[cache_key] = {"score": 0}
     addon.analysis_results[cache_key] = {"score": 0}
     addon.is_analyzing[cache_key] = False
@@ -219,7 +286,15 @@ def main():
     assert cache_key not in addon.ai_analysis_cache
     assert cache_key not in addon.analysis_results
 
-    prompt = addon.get_language_specific_prompt("english", "13 * 17 = ?", "221", ["221", "221.0"], "2")
+    _system, prompt = addon.build_prompt_profile_content(
+        {"prompt_profile": "default", "custom_system_prompt": "", "custom_analysis_prompt_template": ""},
+        "english",
+        "default",
+        "13 * 17 = ?",
+        "221",
+        ["221", "221.0"],
+        "2",
+    )
     assert "review_suggestion" not in prompt
     assert "Accepted answers" in prompt
     assert "221.0" in prompt
@@ -263,6 +338,31 @@ def main():
     assert "higher-scoring full answer" in speaking_prompt.lower()
     assert "do not repeat learner answer unchanged" in speaking_prompt.lower()
 
+    cloze_system, cloze_prompt = addon.build_prompt_profile_content(
+        {
+            "prompt_profile": "cloze_recall",
+            "custom_system_prompt": "",
+            "custom_analysis_prompt_template": "",
+        },
+        "english",
+        "cloze_recall",
+        "This is a |(c1::cat|).",
+        "cat",
+        ["cat"],
+        "cat",
+    )
+    assert cloze_system
+    assert "sample_answers" in cloze_prompt
+    assert "question_variants" not in cloze_prompt
+    assert "Expected answer" in cloze_prompt
+    assert "Accepted answers" in cloze_prompt
+    assert "Student answer" in cloze_prompt
+    assert "set score to 10" in cloze_prompt
+    assert "not exclusive truth" in cloze_prompt
+    assert "preserves meaning may score high" in cloze_prompt
+    assert "Do not mark an answer wrong only because wording differs" in cloze_prompt
+    assert "cat" in cloze_prompt
+
     assert r"\(" in addon.get_language_lock_instruction("english")
     assert "Do not use $...$" in addon.get_language_lock_instruction("english")
 
@@ -281,6 +381,15 @@ def main():
     assert parsed_math_json["score"] == 0
     assert parsed_math_json["tips"] == "Incorrect answer. Solve \\(x^2 = 4\\)."
     assert "score" not in parsed_math_json["tips"]
+
+    addon.save_config({
+        "enabled": True,
+        "prompt_profile": "cloze_recall",
+        "language": "english",
+        "provider": "openai",
+        "openai_api_key": "token",
+        "openai_model": "gpt-4.1-mini",
+    })
 
     custom_system, custom_prompt = addon.build_prompt_profile_content(
         {
@@ -307,10 +416,11 @@ def main():
     assert mismatch["status"] == "variant_mismatch"
     assert mismatch["score"] is None
 
+    cache_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "2")
     addon.analysis_results[cache_key] = {"scored": True, "score": 0, "tips": "Wrong."}
     rendered = addon.render_enhanced_comparison("<div>anki compare</div>", "221", "2", "[[type:Back]]")
     assert "Question Context" not in rendered
-    assert "Review Suggestion" not in rendered
+    assert addon.get_ui_texts("english")["review_suggestion"] in rendered
     assert "Regenerate Analysis" not in rendered
     assert "Improvement Tips" not in rendered
     assert "🤖" not in rendered
@@ -319,6 +429,7 @@ def main():
     assert "aqi-ai-action-btn" in rendered
     assert "aqi-panel-body" in rendered
     assert 'class="aqi-shell"' in rendered
+    assert '<pre class="ak-pre"><code' not in rendered
     assert "font-family: -apple-system" not in rendered
     assert "Wrong." in rendered
     assert "⟳" in rendered
@@ -332,14 +443,22 @@ def main():
         "question_variants": ["What did you do over the weekend?", "How did you spend your weekend?"],
     }
     rendered_structured = addon.build_ai_analysis_panel_html(cache_key, "english")
+    assert addon.get_ui_texts("english")["review_suggestion"] in rendered_structured
     assert addon.get_ai_ui_texts("english")["ai_analysis_sample_answers"] in rendered_structured
     assert addon.get_ai_ui_texts("english")["ai_analysis_question_variants"] in rendered_structured
+    assert rendered_structured.count('class="aqi-section-label"') == 3
     assert "I went to see family." in rendered_structured
     assert "What did you do over the weekend?" in rendered_structured
     assert rendered_structured.count("AI Analysis") == 1
     assert r"\(x^2 = 4\)" in rendered_structured
 
-    speaking_cache_key = addon.build_analysis_cache_key("How was your weekend?", "I visited my grandmother.", "I went to see family.")
+    exact_match_cache_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "I visited my grandmother.")
+    addon.call_ai_api = lambda **kwargs: '{\n  "score": 1,\n  "tips": "Too low.",\n  "sample_answers": ["I visited my grandmother."],\n  "question_variants": []\n}'
+    parsed_exact_match = addon.analyze_answer_with_ai("How was your weekend?", "I visited my grandmother.", ["I visited my grandmother."], "I visited my grandmother.")
+    assert parsed_exact_match["score"] == 10
+    addon.analysis_results[exact_match_cache_key] = parsed_exact_match
+
+    speaking_cache_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "I went to see family.")
     addon.call_ai_api = lambda **kwargs: '{\n  "score": 7,\n  "tips": "Good base answer.",\n  "sample_answers": ["I went to see family.", "I spent time with my family and relaxed at home."],\n  "question_variants": ["What did you do over the weekend?", "How did you spend your weekend?"]\n}'
     parsed_end_to_end = addon.analyze_answer_with_ai("How was your weekend?", "I visited my grandmother.", ["I visited my grandmother."], "I went to see family.")
     addon.analysis_results[speaking_cache_key] = parsed_end_to_end
@@ -357,7 +476,7 @@ def main():
     assert "N/A" in rendered_unscored
     assert addon.get_ai_ui_texts("english")["ai_analysis_sample_answers"] not in rendered_unscored
 
-    loading_analysis_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "17")
+    loading_analysis_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "17")
     addon.analysis_results.pop(loading_analysis_key, None)
     addon.ai_analysis_cache.pop(loading_analysis_key, None)
     addon.is_analyzing[loading_analysis_key] = True
@@ -369,7 +488,7 @@ def main():
     assert "setTimeout(" not in loading_rendered
     addon.is_analyzing.pop(loading_analysis_key, None)
 
-    perfect_cache_key = addon.build_analysis_cache_key("13 * 17 = ?", "221", "221")
+    perfect_cache_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "221")
     addon.analysis_results[perfect_cache_key] = {"scored": True, "score": 10, "tips": "Perfect."}
     perfect_rendered = addon.render_enhanced_comparison("<div>anki compare</div>", "221", "221", "[[type:Back]]")
     assert 'data-score-tier="excellent"' in perfect_rendered
@@ -379,10 +498,10 @@ def main():
     alt_card = DummyCard(model_name="card_1", template_name="card_1_score")
     alt_card.note()["Front"] = "What is your name?"
     alt_card.note()["Back"] = "My name is Long"
-    alt_card.note()["Back_variants"] = "I'm Long;;Long is my name"
+    alt_card.note()["Back_variants"] = "<b>I'm Long</b>;;Long is my name;;[sound:name.mp3];;I'm Long"
     alt_card.question = lambda: "What is your name? [[type:Back]]"
     mw.reviewer.card = alt_card
-    alt_cache_key = addon.build_analysis_cache_key("What is your name?", "My name is Long", "Long")
+    alt_cache_key = build_current_analysis_cache_key(addon, alt_card, "Long")
     addon.analysis_results[alt_cache_key] = {
         "scored": True,
         "score": 4,
@@ -391,8 +510,10 @@ def main():
     }
     alt_rendered = addon.render_enhanced_comparison("<div>anki compare</div>", "My name is Long", "Long", "[[type:Back]]")
     assert "My name is Long" in alt_rendered
+    assert '<pre class="ak-pre"><code' not in alt_rendered
     assert "I&#x27;m Long" in alt_rendered
     assert "Long is my name" in alt_rendered
+    assert "[sound:name.mp3]" not in alt_rendered
     panel_start = alt_rendered.index("aqi-analysis-panel-wrap")
     assert alt_rendered.index("I&#x27;m Long") < panel_start
     assert alt_rendered.index("Long is my name") < panel_start
@@ -408,11 +529,7 @@ def main():
     plain_card = DummyCard(model_name="card_1")
     mw.reviewer.card = plain_card
     plain_payload = addon.build_analysis_prompt_payload(plain_card, "17")
-    plain_cache_key = addon.build_analysis_cache_key(
-        plain_payload["question_text"],
-        plain_payload["canonical_answer"],
-        plain_payload["user_answer"],
-    )
+    plain_cache_key = build_current_analysis_cache_key(addon, plain_card, plain_payload["user_answer"])
     addon.store_ai_analysis(("221", "17"), "[[type:Back]]")
     assert plain_cache_key not in addon.is_analyzing
     assert addon.render_enhanced_comparison("<div>plain compare</div>", "221", "17", "[[type:Back]]") == "<div>plain compare</div>"
@@ -423,6 +540,170 @@ def main():
     template_score_card = DummyCard(model_name="card_1", template_name="card_1_score")
     mw.reviewer.card = template_score_card
     assert addon.should_score_card(template_score_card) is True
+
+    template_score_contains_card = DummyCard(model_name="card_1", template_name="card_1_score_clozeanything1")
+    assert addon.should_score_card(template_score_contains_card) is True
+    assert addon.get_card_capabilities(template_score_contains_card)["scoreable"] is True
+
+    template_score_contains_card.note()["Front"] = "This is a |(c1::cat|)."
+    template_score_contains_card.note()["Back"] = ""
+    template_score_contains_card.note()["Back_variants"] = ""
+    template_score_contains_card.note()["Back"] = ""
+    template_score_contains_card.note()["Back_variants"] = ""
+    cloze_canonical, cloze_answers = addon.build_accepted_answer_pool(template_score_contains_card)
+    assert cloze_canonical == "cat"
+    assert cloze_answers == ["cat"]
+
+    cloze_payload = addon.build_analysis_prompt_payload(template_score_contains_card, "cat")
+    assert cloze_payload["front_text_raw"] == "This is a |(c1::cat|)."
+    assert cloze_payload["cloze_targets"] == ["cat"]
+
+    template_score_contains_card.note()["Back"] = "dog"
+    cloze_conflict_canonical, cloze_conflict_answers = addon.build_accepted_answer_pool(template_score_contains_card)
+    assert cloze_conflict_canonical == "dog"
+    assert cloze_conflict_answers == ["dog"]
+
+    template_score_contains_card.note()["Back"] = "cat"
+    template_score_contains_card.note()["Back_variants"] = "kitty;;feline"
+    cloze_back_canonical, cloze_back_answers = addon.build_accepted_answer_pool(template_score_contains_card)
+    assert cloze_back_canonical == "cat"
+    assert cloze_back_answers == ["cat", "kitty", "feline"]
+
+    template_score_contains_card.note()["Back"] = ""
+    template_score_contains_card.note()["Back_variants"] = ""
+    template_score_contains_card.note()["Back2"] = "dog"
+    template_score_contains_card.note()["Back2_variants"] = "hound;;canine"
+    template_score_contains_card.note()["Front"] = "This is a |(c1::cat|) and a |(c2::dog|)."
+    grouped_targets = addon.extract_grouped_cloze_targets_from_front(template_score_contains_card.note()["Front"])
+    assert grouped_targets == {1: ["cat"], 2: ["dog"]}
+
+    standard_front = "This is a ((c1::cat)) and a ((c2::dog))."
+    assert addon.extract_grouped_cloze_targets_from_front(standard_front) == {1: ["cat"], 2: ["dog"]}
+
+    mixed_front = "This is a ((c1::cat)) and a |(c2::dog|)."
+    assert addon.extract_grouped_cloze_targets_from_front(mixed_front) == {1: ["cat"], 2: ["dog"]}
+    assert addon.resolve_slot_field_names(1) == {
+        "answer_field": "Back",
+        "answer_variants_field": "Back_variants",
+        "hint_field": "Hint",
+    }
+    assert addon.resolve_slot_field_names(2) == {
+        "answer_field": "Back2",
+        "answer_variants_field": "Back2_variants",
+        "hint_field": "Hint2",
+    }
+    assert addon.resolve_slot_field_names(3) == {
+        "answer_field": "Back3",
+        "answer_variants_field": "Back3_variants",
+        "hint_field": "Hint3",
+    }
+    assert addon.resolve_slot_field_names(4) == {
+        "answer_field": "Back4",
+        "answer_variants_field": "Back4_variants",
+        "hint_field": "Hint4",
+    }
+    assert addon.resolve_answer_field_names(1) == ("Back", "Back_variants")
+    assert addon.resolve_answer_field_names(2) == ("Back2", "Back2_variants")
+    assert addon.resolve_answer_field_names(3) == ("Back3", "Back3_variants")
+    assert addon.resolve_answer_field_names(4) == ("Back4", "Back4_variants")
+    assert addon.get_active_cloze_index(template_score_contains_card) == 1
+    assert addon.get_manual_hint_html(template_score_contains_card) == "Base hint"
+
+    multi_contract = addon.build_answer_contract(template_score_contains_card)
+    assert multi_contract["mode"] == "single"
+    assert multi_contract["active_cloze_index"] == 1
+    assert multi_contract["canonical_segments"] == ["cat"]
+    assert multi_contract["canonical_joined_answer"] == "cat"
+    assert multi_contract["accepted_joined_answers"] == ["cat"]
+    assert multi_contract["cloze_targets"] == ["cat"]
+    assert multi_contract["is_valid"] is True
+    multi_cloze_canonical, multi_cloze_answers = addon.build_accepted_answer_pool(template_score_contains_card)
+    assert multi_cloze_canonical == "cat"
+    assert multi_cloze_answers == ["cat"]
+
+    multi_payload = addon.build_analysis_prompt_payload(template_score_contains_card, "cat")
+    assert multi_payload["question_text"] == addon.get_active_visible_question(template_score_contains_card)
+    assert multi_payload["active_cloze_index"] == 1
+    assert multi_payload["canonical_answer"] == "cat"
+    assert multi_payload["expected_answer"] == "cat"
+    assert multi_payload["accepted_answers"] == ["cat"]
+    assert multi_payload["cloze_targets"] == ["cat"]
+
+    template_score_contains_card.note()["Front"] = standard_front
+    template_score_contains_card.ord = 1
+    assert addon.get_active_cloze_index(template_score_contains_card) == 2
+    ord2_contract = addon.build_answer_contract(template_score_contains_card)
+    assert ord2_contract["mode"] == "single"
+    assert ord2_contract["active_cloze_index"] == 2
+    assert ord2_contract["canonical_segments"] == ["dog"]
+    assert ord2_contract["canonical_joined_answer"] == "dog"
+    assert ord2_contract["accepted_joined_answers"] == ["dog", "hound", "canine"]
+    ord2_payload = addon.build_analysis_prompt_payload(template_score_contains_card, "dog")
+    assert ord2_payload["active_cloze_index"] == 2
+    assert ord2_payload["canonical_answer"] == "dog"
+    assert ord2_payload["expected_answer"] == "dog"
+    assert ord2_payload["accepted_answers"] == ["dog", "hound", "canine"]
+    assert ord2_payload["cloze_targets"] == ["dog"]
+    assert addon.get_manual_hint_html(template_score_contains_card) == "Second hint"
+    assert addon.is_accepted_answer_match("hound", ["cat"], card=template_score_contains_card) is True
+
+    template_score_contains_card.note()["Back3"] = "owl"
+    template_score_contains_card.note()["Back3_variants"] = ""
+    template_score_contains_card.note()["Back4"] = "fox"
+    template_score_contains_card.note()["Back4_variants"] = ""
+    template_score_contains_card.ord = 2
+    assert addon.get_manual_hint_html(template_score_contains_card) == "Third hint"
+    template_score_contains_card.ord = 3
+    assert addon.get_manual_hint_html(template_score_contains_card) == "Fourth hint"
+
+    template_score_contains_card.ord = 3
+    sparse_contract = addon.build_answer_contract(template_score_contains_card)
+    assert sparse_contract["active_cloze_index"] == 4
+    assert sparse_contract["is_valid"] is False
+    assert "c4" in sparse_contract["invalid_reason"]
+
+    template_score_contains_card.ord = 1
+    del template_score_contains_card.note()["Back2"]
+    del template_score_contains_card.note()["Back2_variants"]
+    missing_field_contract = addon.build_answer_contract(template_score_contains_card)
+    assert missing_field_contract["is_valid"] is False
+    assert "Back2" in missing_field_contract["invalid_reason"]
+    del template_score_contains_card.note()["Hint2"]
+    assert addon.get_manual_hint_html(template_score_contains_card) == ""
+    template_score_contains_card.note()["Back2"] = "dog"
+    template_score_contains_card.note()["Back2_variants"] = "hound;;canine"
+    template_score_contains_card.note()["Hint2"] = "Second hint"
+
+    unresolved_cloze_card = DummyCard(model_name="card_1_score_clozeanything1", template_name="card_1_score_clozeanything1")
+    unresolved_cloze_card.note()["Hint"] = "Should not leak"
+    unresolved_cloze_card.ord = None
+    unresolved_cloze_card.question = lambda: "This is a |(c1::cat|). [[type:Back]]"
+    unresolved_contract = addon.build_answer_contract(unresolved_cloze_card)
+    assert unresolved_contract["is_valid"] is False
+    assert addon.get_manual_hint_html(unresolved_cloze_card) == ""
+
+    template_score_contains_card.ord = 0
+    multiline_front = "|(c1::Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.|)\n|(c1::Wann hast du Zeit?|)"
+    template_score_contains_card.note()["Front"] = multiline_front
+    template_score_contains_card.note()["Back"] = "Wann hast du Zeit?"
+    multiline_targets = addon.extract_cloze_targets_from_front(multiline_front)
+    assert multiline_targets == [
+        "Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.",
+        "Wann hast du Zeit?",
+    ]
+    grouped_multiline_targets = addon.extract_grouped_cloze_targets_from_front(multiline_front)
+    assert grouped_multiline_targets == {
+        1: [
+            "Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.",
+            "Wann hast du Zeit?",
+        ]
+    }
+    multiline_contract = addon.build_answer_contract(template_score_contains_card)
+    assert multiline_contract["mode"] == "multi_segment"
+    assert multiline_contract["is_valid"] is False
+    assert multiline_contract["canonical_joined_answer"] == "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?"
+
+
     assert addon.get_card_template_name(template_score_card) == "card_1_score"
     assert addon.resolve_prompt_profile(
         {"prompt_profile": "default", "template_prompt_profile_overrides": {"card_1_score": "strict_stem"}}
@@ -446,7 +727,35 @@ def main():
     assert "aqi-analysis-panel-wrap" in mw.reviewer.web.commands[-1]
     assert mw.reviewer.show_answer_calls == 0
 
-    template_score_card.note()["Hint"] = "<b>Factor pairs</b>"
+    mw.reviewer.card = template_score_contains_card
+    addon.call_ai_api = lambda **kwargs: '{\n  "score": 9,\n  "tips": "Good.",\n  "question_variants": ["ignore me", "ignore me too"]\n}'
+    unavailable_or_cloze = addon.analyze_answer_with_ai("This is a |(c1::cat|) and a |(c2::dog|).", "", ["cat", "dog"], "cat")
+    assert unavailable_or_cloze.get("scored") is False
+    assert "not available" in unavailable_or_cloze["tips"].lower() or "multiple cloze" in unavailable_or_cloze["tips"].lower()
+
+    template_score_contains_card.note()["Front"] = "This is a |(c1::cat|)."
+    template_score_contains_card.note()["Back"] = ""
+    template_score_contains_card.note()["Back_variants"] = ""
+    addon.call_ai_api = lambda **kwargs: '{\n  "score": 7,\n  "tips": "Fine.",\n  "question_variants": ["ignore me", "ignore me too"]\n}'
+    parsed_cloze = addon.analyze_answer_with_ai("This is a |(c1::cat|).", "cat", ["cat"], "cat")
+    assert parsed_cloze["score"] == 10
+    assert parsed_cloze["sample_answers"] == []
+    assert parsed_cloze["question_variants"] == []
+
+    addon.save_config({"enabled": False, "prompt_profile": "default"})
+    mw.reviewer.card = template_score_card
+
+    addon.current_hint_context.update({"cache_key": "keep-me", "card_id": 1})
+    addon.front_hint_panel_state.update({"cache_key": "keep-me", "is_open": True})
+    mw.addonManager.config = {"enabled": True, "use_custom_prompt": True, "provider": "openai"}
+    persisted_before = dict(mw.addonManager.config)
+    resolved_cfg = addon.get_config()
+    assert resolved_cfg["prompt_profile"] == "custom"
+    assert mw.addonManager.config == persisted_before
+    assert addon.current_hint_context["cache_key"] == "keep-me"
+    assert addon.front_hint_panel_state["cache_key"] == "keep-me"
+
+    template_score_card.note()["Hint"] = "<script>alert(1)</script><b>Factor pairs</b> **bold**"
     assert addon.is_supported_typed_answer_card(template_score_card, template_score_card.question(), "Question") is True
     assert addon.is_front_hint_eligible(template_score_card, template_score_card.question(), "Question") is True
 
@@ -485,7 +794,11 @@ def main():
     front_rendered = addon.render_front_hint_panel("<div>front side</div>", template_score_card, "Question")
     assert "aqi-front-hint-panel" in front_rendered
     assert "aqi-panel-card aqi-front-hint-card" in front_rendered
-    assert "<b>Factor pairs</b>" in front_rendered
+    assert "<script>" not in front_rendered
+    assert "alert(1)" not in front_rendered
+    assert "<b>Factor pairs</b>" not in front_rendered
+    assert "Factor pairs" in front_rendered
+    assert "<strong>bold</strong>" in front_rendered
     assert "aqi-front-hint-label" not in front_rendered
     assert "Suggest Hint" in front_rendered
     assert "disabled" in front_rendered
@@ -526,7 +839,23 @@ def main():
 
     addon.refresh_front_hint_panel_dom("<div id='aqi-front-hint-body'>patched</div>")
     assert mw.reviewer.web.commands
-    assert "aqi-front-hint-body" in mw.reviewer.web.commands[-1]
+    assert any("aqi-front-hint-body" in command for command in mw.reviewer.web.commands[-2:])
+    assert "syncTypedAnswerFooter()" in mw.reviewer.web.commands[-1]
+
+    stale_card = DummyCard(model_name="card_1_score", template_name="card_1_score")
+    stale_card.id = 2
+    stale_card._note["Front"] = "19 * 19 = ?"
+    stale_card._note["Back"] = "361"
+    stale_card._note["Hint"] = "Second card hint"
+    stale_card.question = lambda: "19 * 19 = ? [[type:Back]]"
+    preserved_hint_context = dict(addon.current_hint_context)
+    active_card = mw.reviewer.card
+    mw.reviewer.web.commands.clear()
+    mw.reviewer.card = stale_card
+    addon.refresh_current_front_hint_panel(loading_hint_context["cache_key"])
+    assert not mw.reviewer.web.commands
+    assert addon.current_hint_context == preserved_hint_context
+    mw.reviewer.card = active_card
 
     addon.save_config({"enabled": False, "prompt_profile": "default"})
     unavailable_hint = addon.suggest_ai_hint()
@@ -558,8 +887,10 @@ def main():
     assert addon.current_hint_context["question_text"] == "13 * 17 = ?"
     assert addon.front_hint_panel_state["is_open"] is True
     assert mw.reviewer.web.commands
-    assert "&lt;221&gt;" in mw.reviewer.web.commands[-1]
+    assert any("&lt;221&gt;" in command for command in mw.reviewer.web.commands[-3:])
     ready_hint_rendered = addon.render_front_hint_panel("<div>front side</div>", template_score_card, "Question")
+    assert addon.get_hint_ui_texts("english")["ai_hint_label"] in ready_hint_rendered
+    assert 'class="aqi-section-label"' in ready_hint_rendered
     assert "aqi-ai-action-btn" in ready_hint_rendered
     assert "Regenerate" in ready_hint_rendered
     assert "⟳" in ready_hint_rendered
@@ -590,6 +921,16 @@ def main():
     math_html = addon.render_ai_rich_text(r"Formula \(x^2+y^2\)")
     assert r"\(x^2+y^2\)" in math_html
 
+    reviewer_context = type("Reviewer", (), {})()
+    web_content = types.SimpleNamespace(head="", body="")
+    addon.inject_multiline_type_input(web_content, reviewer_context)
+    assert ".aqi-section-label {" in web_content.head
+    assert "font-family: var(--aqi-font-body) !important;" in web_content.head
+    assert ".aqi-active-question," in web_content.head
+    assert ".aqi-choice-list," in web_content.head
+    assert ".aqi-active-question,\n.sqv-active-question {\n  font-family: inherit;" in web_content.head
+    assert ".aqi-choice-list,\n.sqv-choice-list {\n  font-family: inherit;" in web_content.head
+
     hostile_html = addon.render_ai_rich_text("<script>alert(1)</script><b>hi</b>")
     assert "<script>" not in hostile_html
     assert "&lt;script&gt;" in hostile_html
@@ -610,7 +951,8 @@ def main():
     assert "<strong>safe</strong>" in unavailable_analysis_rendered or "Use **safe** fallback" in unavailable_analysis_rendered
 
     addon.refresh_front_hint_panel_dom("<div id='aqi-front-hint-body'>patched</div>")
-    assert "aqi-front-hint-body" in mw.reviewer.web.commands[-1]
+    assert "syncTypedAnswerFooter()" in mw.reviewer.web.commands[-1]
+    assert any("aqi-front-hint-body" in command for command in mw.reviewer.web.commands[-2:])
     addon.refresh_ai_analysis_panel_dom("<div class='aqi-analysis-panel-wrap'>patched</div>")
     assert "aqi-analysis-panel-wrap" in mw.reviewer.web.commands[-1]
     assert "MathJax" in mw.reviewer.web.commands[-1] or "typeset" in mw.reviewer.web.commands[-1]
@@ -618,4 +960,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 

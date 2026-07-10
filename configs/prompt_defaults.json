@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "languages": {
+    "english": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "french": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "spanish": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "german": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "russian": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "japanese": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "chinese": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "korean": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    }
+  },
+  "profiles": {
+    "default": {
+      "system_prompt": "You are a careful answer-review assistant. Follow instructions exactly and return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language}. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nHint: {hint}\nReturn JSON with score and tips only. Do not include extra review suggestion fields.",
+      "hint_prompt_template": "Write one concise hint in {language} for this question without giving away the full answer. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "strict_stem": {
+      "system_prompt": "You are a careful STEM answer-review assistant. Return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language} for precise STEM grading. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nFocus on numeric correctness, sign, unit, and completeness.",
+      "hint_prompt_template": "Write one concise STEM-oriented hint in {language}. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "speaking_flexible": {
+      "system_prompt": "You are a careful speaking-feedback assistant. Return valid JSON only.",
+      "analysis_prompt_template": "Review learner answer in {language} for communicative adequacy. Question: {question}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nAllow alternative valid responses when meaning is correct. Return sample_answers and question_variants. Generate 2-3 sample_answers. Build from learner answer toward a higher-scoring full answer. Do not repeat learner answer unchanged.",
+      "hint_prompt_template": "Write one concise speaking-oriented hint in {language}. Question: {question}\nExpected answer: {expected_answer}\nExisting hint: {hint}"
+    },
+    "cloze_recall": {
+      "system_prompt": "You are a careful cloze-recall review assistant. Return valid JSON only.",
+      "analysis_prompt_template": "Review cloze recall answer in {language}. Question: {question}\nFront text: {front_text_raw}\nCloze targets: {cloze_targets}\nExpected answer: {expected_answer}\nAccepted answers: {accepted_answers}\nStudent answer: {user_answer}\nIf student answer matches accepted meaning, set score to 10. Canonical answer is not exclusive truth. preserves meaning may score high. Do not mark an answer wrong only because wording differs. Return sample_answers only; do not return alternative question rewrites.",
+      "hint_prompt_template": "Write one concise cloze-recall hint in {language}. Question: {question}\nExpected answer: {expected_answer}\nCloze targets: {cloze_targets}\nExisting hint: {hint}"
+    }
+  }
+}
+

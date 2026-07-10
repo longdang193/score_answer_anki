@@ -172,6 +172,8 @@ Each AI provider has its own tab with specific configuration:\n
   - A score from 0-10
   - Specific improvement tips
   - A compact refresh action if you want a fresh answer
+- On supported typed-answer cards, the answer box stays docked at the bottom with the hint controls so you can keep the input visible while reading long questions.
+- When you scroll to the end of a long typed-answer question, the add-on reserves space above the docked footer so the last visible word is not hidden behind the input area.
 
 ## AI Scoring System
 
@@ -291,7 +293,9 @@ For issues specific to this add-on, check:
 - Owner: `score_answer_anki`
 - Surface: front side only
 - Gate: `_score` template plus supported typed-answer front-side path
-- Manual `Hint` field passes through stored field content
+- Manual mapped hint field passes through stored field content
+- Active-slot mapping is: `c1 -> Hint`, `c2 -> Hint2`, `c3 -> Hint3`, `c4 -> Hint4`; non-cloze score cards use `Hint`
+- Missing mapped hint field behaves as empty manual hint
 - AI hint and AI analysis use same bounded rich-format renderer
 - Supported AI formatting: paragraphs, `**bold**`, `*italic*`, inline code, fenced code blocks, ordered/unordered lists, canonical `\(...\)` and `\[...\]` math delimiters
 - Unsupported AI formatting in V1: raw HTML, links, images, tables, blockquotes, `$...$`, `$$...$$`

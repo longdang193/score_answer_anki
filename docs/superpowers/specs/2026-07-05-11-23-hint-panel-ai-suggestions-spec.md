@@ -62,10 +62,11 @@ Requested behavior:
 
 ## Wave 2: Manual hint field contract and render contract
 
-- Note field name is exactly `Hint`
-- `Hint` field is optional
-- Missing `Hint` field is treated as empty manual hint, not as error
-- Manual hint source of truth is current note field value only
+- Manual hint field is slot-driven
+- Base slot uses `Hint`; active cloze slot `x > 1` uses `Hint{x}`
+- Mapped hint field is optional
+- Missing mapped hint field is treated as empty manual hint, not as error
+- Manual hint source of truth is current mapped note field value only
 - Manual hint renders using same HTML semantics as note field content already uses in Anki; V1 must not reinterpret stored field HTML as plain text
 - AI hint renders as plain text only
 - AI hint render path must HTML-escape generated content before insertion
@@ -164,7 +165,7 @@ User answer is not part of hint-generation identity in V1.
 
 ## Wave 8: Docs and runnable proof
 
-- Document `Hint` field as optional manual hint source for front-side hint panel
+- Document mapped active-slot hint field as optional manual hint source for front-side hint panel
 - Document that feature is owned by `score_answer_anki`, not by note-template-local hint buttons
 - Document that AI hint is session output, not auto-saved note content
 - Document that AI hint request sends question, answer, and existing hint content to configured provider
