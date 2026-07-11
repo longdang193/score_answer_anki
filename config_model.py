@@ -160,28 +160,6 @@ def get_score_tier(score, is_scored: bool) -> str:
         return "high"
     return "excellent"
 
-DEFAULT_CUSTOM_SYSTEM_PROMPT = (
-    "You are an educational assistant. Evaluate the student's answer kindly and constructively."
-)
-
-DEFAULT_CUSTOM_ANALYSIS_PROMPT_TEMPLATE = """Analyze the student's answer and return strict JSON.
-
-Question: "{question}"
-Expected answer: "{expected_answer}"
-Accepted answers: "{accepted_answers}"
-Student answer: "{user_answer}"
-Language: "{language}"
-
-Return ONLY valid JSON with this schema:
-{
-  "score": 0,
-  "tips": "short constructive feedback"
-}
-
-Rules:
-- score is an integer from 0 to 10
-- tips should be concise and actionable
-"""
 
 CUSTOM_OPENAI_PROVIDER = "custom_openai"
 
@@ -641,6 +619,38 @@ def resolve_prompt_profile_content(config, language: str, profile_name: str) -> 
 
     return resolve_prompt_default_content(language, normalized_profile)
 
+def build_analysis_output_contract(profile: str) -> str:
+    normalized_profile = normalize_prompt_profile(profile) or PROMPT_PROFILE_DEFAULT
+    shared_rules = (
+        "\n\nOUTPUT CONTRACT:\n"
+        "- Return exactly one JSON object.\n"
+        "- No markdown. No code fences. No leading or trailing text.\n"
+        "- Keys must be lowercase snake_case exactly as specified.\n"
+        "- score must be an integer from 0 to 10.\n"
+        "- tips must be one JSON string.\n"
+    )
+    if normalized_profile == PROMPT_PROFILE_SPEAKING_FLEXIBLE:
+        return shared_rules + (
+            "- Return exactly these four keys: score, tips, sample_answers, question_variants.\n"
+            "- sample_answers must be an array of 2 or 3 plain strings. No objects.\n"
+            "- question_variants must be an array of 2 or 3 plain strings. No objects.\n"
+            "- Do not wrap sample answers inside objects like {\"answer\": ...}.\n"
+            'Example: {"score":7,"tips":"...","sample_answers":["...","..."],"question_variants":["...","..."]}'
+        )
+    if normalized_profile == PROMPT_PROFILE_CLOZE_RECALL:
+        return shared_rules + (
+            "- Return exactly these three keys: score, tips, sample_answers.\n"
+            "- sample_answers must be an array of 0 to 3 plain strings. No objects.\n"
+            "- Do not return question_variants.\n"
+            'Example: {"score":10,"tips":"...","sample_answers":["..."]}'
+        )
+    return shared_rules + (
+        "- Return exactly these two keys: score, tips.\n"
+        "- Do not return sample_answers.\n"
+        "- Do not return question_variants.\n"
+        'Example: {"score":8,"tips":"..."}'
+    )
+
 def build_prompt_profile_content(config, language: str, profile: str, question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str, *, front_text_raw: str = "", cloze_targets: list[str] | None = None) -> tuple[str, str]:
     resolved = resolve_prompt_profile_content(config, language, profile)
     rendered_prompt = render_prompt_template(
@@ -653,4 +663,5 @@ def build_prompt_profile_content(config, language: str, profile: str, question_t
         front_text_raw=front_text_raw,
         cloze_targets=cloze_targets,
     )
+    rendered_prompt += build_analysis_output_contract(profile)
     return resolved["system_prompt"], rendered_prompt

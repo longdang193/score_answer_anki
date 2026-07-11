@@ -228,8 +228,18 @@ function syncTypedAnswerFooter(){
   var footer=ensureTypedAnswerFooter();
   var inputHost=footer.querySelector('.aqi-review-footer__input');
   var hintHost=footer.querySelector('.aqi-review-footer__hint');
+  if(inputHost){
+    Array.prototype.slice.call(inputHost.children).forEach(function(child){
+      if(child!==wrap&&child&&child.parentNode===inputHost){ inputHost.removeChild(child); }
+    });
+  }
   if(inputHost&&wrap.parentNode!==inputHost){ inputHost.appendChild(wrap); }
   var hint=document.querySelector('.aqi-front-hint-wrap');
+  if(hintHost){
+    Array.prototype.slice.call(hintHost.children).forEach(function(child){
+      if(child!==hint&&child&&child.parentNode===hintHost){ hintHost.removeChild(child); }
+    });
+  }
   if(hintHost&&hint&&hint.parentNode!==hintHost){ hintHost.appendChild(hint); }
   ensureTypedAnswerFooterResizeObserver();
   syncTypedAnswerFooterOffset();
@@ -2219,13 +2229,18 @@ def build_answer_contract(card) -> dict:
     if normalized_back and normalized_back != normalized_canonical:
         is_valid = False
         invalid_reason = f"Invalid multi-cloze Back for c{active_cloze_index} does not match derived full answer."
+    accepted_values = [canonical_joined_answer] if canonical_joined_answer else []
+    if canonical_answer and normalized_back == normalized_canonical:
+        accepted_values.insert(0, canonical_answer)
+    accepted_values.extend(answer_variants)
+    accepted_answers = _ordered_unique(accepted_values)
     return {
         "mode": "multi_segment",
         "source_kind": "cloze",
         "active_cloze_index": active_cloze_index,
         "canonical_segments": canonical_segments,
         "canonical_joined_answer": canonical_joined_answer,
-        "accepted_joined_answers": [canonical_joined_answer] if canonical_joined_answer else [],
+        "accepted_joined_answers": accepted_answers,
         "front_text_raw": front_text_raw,
         "cloze_targets": canonical_segments,
         "is_valid": is_valid,
@@ -2821,6 +2836,14 @@ def analyze_answer_request(request: dict, card=None) -> dict:
             for candidate in parse_candidates:
                 try:
                     result = json.loads(candidate)
+                    while isinstance(result, str):
+                        nested_candidate = result.strip()
+                        if not nested_candidate:
+                            break
+                        try:
+                            result = json.loads(nested_candidate)
+                        except json.JSONDecodeError:
+                            break
                     break
                 except json.JSONDecodeError:
                     continue
@@ -2830,6 +2853,7 @@ def analyze_answer_request(request: dict, card=None) -> dict:
             normalized_result = _normalize_ai_analysis_payload(result, profile, active_profile, force_exact_match_perfect_score)
             if normalized_result is not None:
                 return finalize_result(normalized_result)
+            return finalize_result(make_analysis_unavailable("AI returned unsupported JSON schema", language))
         except (json.JSONDecodeError, ValueError, KeyError):
             pass
 

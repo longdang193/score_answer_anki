@@ -200,6 +200,8 @@ def main():
     assert source.count("refresh_dom_fragment(") >= 3
     assert "def build_ai_analysis_panel_html(" in source
     assert source.count("build_ai_analysis_panel_html(") >= 2
+    assert "if(child!==wrap&&child&&child.parentNode===inputHost){ inputHost.removeChild(child); }" in source
+    assert "if(child!==hint&&child&&child.parentNode===hintHost){ hintHost.removeChild(child); }" in source
 
     merged_legacy = addon.merge_config_with_defaults({"use_custom_prompt": True})
     assert merged_legacy["prompt_profile"] == "custom"
@@ -259,6 +261,29 @@ def main():
     assert language_options[0] == ('english', addon.LANGUAGE_REGISTRY['english']['ui']['display_name'])
     assert ('french', addon.LANGUAGE_REGISTRY['french']['ui']['display_name']) in language_options
     assert addon.get_language_name('french') == addon.LANGUAGE_REGISTRY['french']['ui']['instruction_name']
+
+    addon.call_ai_api = lambda **_kwargs: '{"sample_answers":["In meinem Heimatland sehen viele Kinder täglich fern."]}'
+    malformed_json_result = addon.analyze_answer_request(
+        {
+            "question_text": "Frage",
+            "canonical_answer": "Antwort",
+            "accepted_answers": ["Antwort"],
+            "user_answer": "Antwort",
+            "language": "english",
+            "provider": "openai",
+            "model": "gpt-test",
+            "api_key": "test-key",
+            "base_url": "",
+            "prompt_profile": addon.PROMPT_PROFILE_DEFAULT,
+            "max_tokens": 64,
+            "temperature": 0.0,
+            "availability_reason": "",
+            "analysis_mode": "standard",
+        },
+        card=DummyCard(),
+    )
+    assert malformed_json_result["tips"].startswith("AI analysis not available: AI returned unsupported JSON schema")
+    assert malformed_json_result["scored"] is False
 
 
     fr_review_labels = addon.get_compare_labels({"language": "french", "ui_language": "en"})
@@ -334,6 +359,11 @@ def main():
     assert hasattr(addon, "resolve_prompt_default_content")
     resolved_file_default = addon.resolve_prompt_default_content("english", "default")
     assert resolved_default == resolved_file_default
+    assert resolved_file_default["system_prompt"].startswith("You are an educational assistant")
+    resolved_french_default = addon.resolve_prompt_default_content("french", "default")
+    assert "Les réponses acceptées sont des alternatives pleinement valides" in resolved_french_default["analysis_prompt_template"]
+    assert "Return exactly one JSON object with keys score and tips" in resolved_file_default["analysis_prompt_template"]
+    assert "no review_suggestion fields" in resolved_file_default["analysis_prompt_template"]
     assert addon.resolve_prompt_default_content("english", "not-supported") == resolved_file_default
 
     placeholder_block = source.split("def update_default_prompt_placeholders():", 1)[1].split("def get_selected_prompt_profile()", 1)[0]
@@ -378,9 +408,16 @@ def main():
         ["221", "221.0"],
         "2",
     )
-    assert "review_suggestion" not in prompt
+    assert "no review_suggestion fields" in prompt
     assert "Accepted answers" in prompt
     assert "221.0" in prompt
+    assert "Accepted answers are equally valid alternatives" in prompt
+    assert "Do not require exact wording of the expected answer" in prompt
+    assert "nearest accepted answer" in prompt
+    assert "OUTPUT CONTRACT" in prompt
+    assert 'Example: {"score":8,"tips":"..."}' in prompt
+    assert "Do not return sample_answers" in prompt
+    assert "Do not return question_variants" in prompt
 
     strict_system, strict_prompt = addon.build_prompt_profile_content(
         {
@@ -398,6 +435,9 @@ def main():
     assert "numeric" in strict_prompt.lower()
     assert "sign" in strict_prompt.lower()
     assert "unit" in strict_prompt.lower()
+    assert 'Example: {"score":8,"tips":"..."}' in strict_prompt
+    resolved_strict_default = addon.resolve_prompt_default_content("english", "strict_stem")
+    assert "Focus on numeric correctness, sign, unit, and completeness." in resolved_strict_default["analysis_prompt_template"]
 
     speaking_system, speaking_prompt = addon.build_prompt_profile_content(
         {
@@ -420,6 +460,14 @@ def main():
     assert "build from learner answer" in speaking_prompt.lower()
     assert "higher-scoring full answer" in speaking_prompt.lower()
     assert "do not repeat learner answer unchanged" in speaking_prompt.lower()
+    assert "Return exactly these four keys" in speaking_prompt
+    assert "No objects" in speaking_prompt
+    assert 'Example: {"score":7,"tips":"...","sample_answers":["...","..."],"question_variants":["...","..."]}' in speaking_prompt
+    resolved_speaking_default = addon.resolve_prompt_default_content("english", "speaking_flexible")
+    assert "Accepted answers are equally valid alternatives" in resolved_file_default["analysis_prompt_template"]
+    assert "Do not require exact wording of the expected answer" in resolved_file_default["analysis_prompt_template"]
+    assert "keys score, tips, sample_answers, question_variants" in resolved_speaking_default["analysis_prompt_template"]
+    assert "arrays of plain strings, never objects" in resolved_speaking_default["analysis_prompt_template"]
 
     cloze_system, cloze_prompt = addon.build_prompt_profile_content(
         {
@@ -436,14 +484,43 @@ def main():
     )
     assert cloze_system
     assert "sample_answers" in cloze_prompt
-    assert "question_variants" not in cloze_prompt
+    assert "Do not return question_variants" in cloze_prompt
     assert "Expected answer" in cloze_prompt
     assert "Accepted answers" in cloze_prompt
     assert "Student answer" in cloze_prompt
-    assert "set score to 10" in cloze_prompt
-    assert "not exclusive truth" in cloze_prompt
-    assert "preserves meaning may score high" in cloze_prompt
-    assert "Do not mark an answer wrong only because wording differs" in cloze_prompt
+    assert "score 10" in cloze_prompt.lower()
+    assert "usually treat this as recall-focused, not free speaking" in cloze_prompt.lower()
+    assert "a natural paraphrase may score high" in cloze_prompt.lower()
+    assert "angaben vs anlagen is a serious error" in cloze_prompt.lower()
+    assert "dialogue, roleplay cue, explanation prompt" in cloze_prompt.lower()
+    assert "accepted answers are strong anchors" in cloze_prompt.lower()
+    assert "near-synonymous verbs or softer modal phrasing" in cloze_prompt.lower()
+    assert "Do not use other speaker lines or other cloze groups as sample_answers" in cloze_prompt
+    assert "Return exactly these three keys" in cloze_prompt
+    assert "Do not return question_variants" in cloze_prompt
+    assert 'Example: {"score":10,"tips":"...","sample_answers":["..."]}' in cloze_prompt
+    resolved_cloze_default = addon.resolve_prompt_default_content("english", "cloze_recall")
+    assert "keys score, tips, sample_answers" in resolved_cloze_default["analysis_prompt_template"]
+    assert "Do not return question_variants" in resolved_cloze_default["analysis_prompt_template"]
+    assert "usually treat this as recall-focused, not free speaking" in resolved_cloze_default["analysis_prompt_template"].lower()
+    assert "a natural paraphrase may score high" in resolved_cloze_default["analysis_prompt_template"].lower()
+
+    custom_system, custom_prompt = addon.build_prompt_profile_content(
+        {
+            "prompt_profile": "custom",
+            "custom_system_prompt": "System",
+            "custom_analysis_prompt_template": "Q={question}",
+        },
+        "english",
+        "custom",
+        "Question?",
+        "Answer",
+        ["Answer"],
+        "User",
+    )
+    assert custom_system == "System"
+    assert custom_prompt.startswith("Q=Question?")
+    assert "OUTPUT CONTRACT" in custom_prompt
     assert "cat" in cloze_prompt
 
     assert r"\(" in addon.get_language_lock_instruction("english")
@@ -495,7 +572,8 @@ def main():
         "2",
     )
     assert custom_system == "System custom"
-    assert custom_prompt == "Q=13 * 17 = ? A=221 U=2"
+    assert custom_prompt.startswith("Q=13 * 17 = ? A=221 U=2")
+    assert "OUTPUT CONTRACT" in custom_prompt
 
     assert addon.build_custom_system_placeholder(
         {"custom_system_placeholder": "If empty, language default system prompt is used."}
@@ -1273,6 +1351,24 @@ def main():
     assert multiline_contract["mode"] == "multi_segment"
     assert multiline_contract["is_valid"] is False
     assert multiline_contract["canonical_joined_answer"] == "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?"
+
+    template_score_contains_card.note()["Back"] = multiline_contract["canonical_joined_answer"]
+    template_score_contains_card.note()["Back_variants"] = "Unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann passt es dir?"
+    multiline_valid_contract = addon.build_answer_contract(template_score_contains_card)
+    assert multiline_valid_contract["mode"] == "multi_segment"
+    assert multiline_valid_contract["is_valid"] is True
+    assert multiline_valid_contract["accepted_joined_answers"] == [
+        "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?",
+        "Unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann passt es dir?",
+    ]
+    multiline_canonical, multiline_answers = addon.build_accepted_answer_pool(template_score_contains_card)
+    assert multiline_canonical == "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?"
+    assert multiline_answers == [
+        "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?",
+        "Unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann passt es dir?",
+    ]
+    template_score_contains_card.note()["Back"] = "Wann hast du Zeit?"
+    template_score_contains_card.note()["Back_variants"] = ""
 
 
     assert addon.get_card_template_name(template_score_card) == "card_1_score"
