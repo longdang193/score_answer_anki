@@ -53,10 +53,14 @@ AI-powered semantic evaluation for Anki `type:` cards, with multilingual feedbac
 - **Deep Analysis**:
   - runs only when you click `Deep Analysis`
   - uses selected provider `Deep model` plus `Deep prompt profile`
+  - can optionally enrich deep prompts with NotebookLM MCP context
   - renders in same `AI Analysis` panel and can return to cached standard result
-- **Phase 1 scope**:
-  - NotebookLM is not used
-  - no notebook selector or notebook context is involved
+- **Phase 2 NotebookLM scope**:
+  - NotebookLM is deep-only and optional
+  - NotebookLM controls live in `Deep`, not `Providers`
+  - review-time deep query uses saved `notebook_id` directly
+  - NotebookLM context is trimmed to first `4000` chars after whitespace normalization
+  - NotebookLM-enabled deep runs do not write reusable persistent cache entries
 
 ## Supported Languages
 
@@ -84,8 +88,8 @@ Analysis feedback and UI labels currently support:
 1. Open `Tools -> AI Multi-Provider Configuration`.
 2. In `General`, choose `Analysis language` and compare-display options.
 3. In `Standard`, keep `Use Standard Analysis` enabled and choose provider, model, prompt profile, max tokens, and temperature.
-4. In `Deep`, enable `Use Deep Analysis` only if you want manual deep review, then choose provider, model, prompt profile, max tokens, and temperature.
-5. In `Providers`, add provider credentials, base URL for `Custom OpenAI-Compatible`, and any extra model IDs you want remembered.
+4. In `Deep`, enable `Use Deep Analysis` only if you want manual deep review, then choose provider, model, prompt profile, max tokens, and temperature. If you want NotebookLM context, tick `Use NotebookLM MCP`, click `Refresh NotebookLM Session`, click `Refresh Notebook List`, then choose `Target Notebook`.
+5. In `Providers`, add provider credentials, base URL for `Custom OpenAI-Compatible`, and any extra model IDs you want remembered. NotebookLM controls do not live here.
 6. Click `Test API Connection` to test every non-blank mode model; blank model fields are skipped.
 7. Save and review your `type:` cards as usual.
 
@@ -128,7 +132,7 @@ Phase 1 uses four top-level tabs:
 
 - **General**: shared analysis language, compare-display toggles, shared custom prompt fields
 - **Standard**: standard-mode enable flag plus provider, model, prompt profile, max tokens, and temperature
-- **Deep**: deep-mode enable flag plus provider, model, prompt profile, max tokens, and temperature
+- **Deep**: deep-mode enable flag plus provider, model, prompt profile, max tokens, temperature, and optional NotebookLM settings
 - **Providers**: provider-owned credentials, `Custom OpenAI-Compatible` base URL, and saved extra model IDs
 
 ### General Tab
@@ -159,6 +163,10 @@ Phase 1 uses four top-level tabs:
 - **Prompt profile**: supports `default`, `strict_stem`, `speaking_flexible`, `cloze_recall`, and `custom`
 - **Feedback length**: mode-owned `max_tokens`
 - **Temperature**: mode-owned response variance
+- **Use NotebookLM MCP**: deep-only optional retrieval toggle
+- **Refresh NotebookLM Session**: manual auth/session check; review-time deep run does not pop auth automatically
+- **Refresh Notebook List**: manual notebook discovery for settings only
+- **Target Notebook**: persists by `notebook_id`; title is display-only metadata
 - **Deep Analysis button rule**: appears only when deep mode is enabled and deep model is non-blank
 
 ### Providers Tab
@@ -227,7 +235,9 @@ If selected model test fails, the add-on may successfully validate via `openrout
 ## Privacy
 
 - Card question/answer content is sent to selected AI provider for analysis
+- When deep NotebookLM is enabled, deep review also sends question/answer context to NotebookLM for retrieval-only support
 - The add-on stores temporary in-memory cache for active session flow
+- NotebookLM-enabled deep runs skip reusable persistent cache writes in Phase 2
 - No long-term local analytics storage is implemented by default
 - Provider-side retention policies depend on the provider you choose
 

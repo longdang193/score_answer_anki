@@ -63,7 +63,11 @@ Phase 1 uses four top-level tabs:
   - prompt profile
   - max tokens
   - temperature
-- **Rule**: deep settings gray out when deep mode is off; review panel shows `Deep Analysis` only when deep mode is enabled and model is non-blank
+  - `Use NotebookLM MCP`
+  - `Refresh NotebookLM Session`
+  - `Refresh Notebook List`
+  - `Target Notebook`
+- **Rule**: deep settings gray out when deep mode is off; NotebookLM subcontrols gray out when `Use NotebookLM MCP` is off; review panel shows `Deep Analysis` only when deep mode is enabled and model is non-blank
 
 #### Providers
 - **Purpose**: Own provider credentials and provider-level saved extras
@@ -71,7 +75,7 @@ Phase 1 uses four top-level tabs:
   - API key per provider
   - base URL for `Custom OpenAI-Compatible`
   - saved extra model IDs per provider
-- **Rule**: credentials live here only; Standard/Deep reference providers instead of duplicating credentials
+- **Rule**: credentials live here only; Standard/Deep reference providers instead of duplicating credentials; NotebookLM controls do not live here
 
 #### Shared Custom Prompt Fields
 - **Custom system prompt**: shown when standard or deep profile is `custom`
@@ -153,6 +157,7 @@ Each AI provider has its own tab with specific configuration:\n
 1. In `Standard`, keep `Use Standard Analysis` enabled for automatic scoring
 2. Choose standard provider, model, prompt profile, max tokens, and temperature
 3. In `Deep`, enable `Use Deep Analysis` only if you want manual stronger review
+4. If you want NotebookLM support for deep review, tick `Use NotebookLM MCP`, click `Refresh NotebookLM Session`, click `Refresh Notebook List`, and choose `Target Notebook`
 4. Choose deep provider, model, prompt profile, max tokens, and temperature
 
 ### 3. Configure Providers and Test
@@ -169,7 +174,10 @@ Each AI provider has its own tab with specific configuration:\n
 - After answering, you'll see both Anki's standard comparison and automatic standard AI analysis
 - When deep mode is enabled and deep model is configured, the standard panel also shows `Deep Analysis`
 - Deep results render in same panel and can return to cached standard result with `Show standard`
-- Phase 1 does not use NotebookLM or notebook selection
+- NotebookLM is deep-only and optional in Phase 2
+- Review-time deep NotebookLM query uses saved `notebook_id` directly and does not refresh notebook list first
+- NotebookLM context is whitespace-normalized, trimmed to first `4000` chars, and warning-backed on truncation
+- NotebookLM-enabled deep runs do not write reusable persistent cache entries in Phase 2
 - The AI provides:
   - A score from 0-10
   - Specific improvement tips
@@ -242,6 +250,7 @@ The AI evaluates your answers on a 0-10 scale:
 - The add-on caches recent analyses to avoid duplicate API calls
 - Analysis happens asynchronously to avoid blocking your reviews
 - Cache automatically clears after 10 entries to manage memory
+- NotebookLM-enabled deep runs intentionally skip reusable persistent cache in Phase 2
 
 ### Question and Answer Variants
 
