@@ -151,7 +151,19 @@ def load_addon_module():
 
 
 def read_addon_source() -> str:
-    return pathlib.Path(__file__).with_name("__init__.py").read_text(encoding="utf-8")
+    base = pathlib.Path(__file__).parent
+    parts = []
+    for name in (
+        "__init__.py",
+        "locales.py",
+        "config_model.py",
+        "ai_runtime.py",
+        "reviewer_ui.py",
+    ):
+        path = base / name
+        if path.exists():
+            parts.append(path.read_text(encoding="utf-8"))
+    return "\n\n".join(parts)
 
 
 def build_current_analysis_cache_key(addon, card, user_answer: str, config=None, analysis_mode: str = "standard") -> str:
@@ -453,6 +465,13 @@ def main():
     assert parsed_math_json["tips"] == "Incorrect answer. Solve \\(x^2 = 4\\)."
     assert "score" not in parsed_math_json["tips"]
 
+    addon.call_ai_api = lambda **kwargs: '{"sample_answers":[{"answer":"4\n5","score":0,"tips":"Not target sentence. Write German text: \"Am Freitagnachmittag hätte ich Zeit. Wie wäre es mit Freitag um sechzehn Uhr?\""}]}'
+    parsed_nested_json = addon.analyze_answer_with_ai("Wann hast du Zeit?", "Am Freitagnachmittag hätte ich Zeit. Wie wäre es mit Freitag um sechzehn Uhr?", ["Am Freitagnachmittag hätte ich Zeit. Wie wäre es mit Freitag um sechzehn Uhr?"], "4\n5")
+    assert parsed_nested_json["score"] == 0
+    assert parsed_nested_json["tips"].startswith("Not target sentence.")
+    assert parsed_nested_json["sample_answers"] == ["4\n5"]
+    assert parsed_nested_json["question_variants"] == []
+
     addon.save_config({
         "enabled": True,
         "prompt_profile": "cloze_recall",
@@ -542,6 +561,8 @@ def main():
     assert "Wrong." in rendered
     assert "⟳" in rendered
     assert "Regenerate" in rendered
+
+    assert addon.render_ai_rich_text("Line one<br>Line two") == "<p>Line one<br>Line two</p>"
 
     addon.analysis_results[cache_key] = {
         "scored": True,

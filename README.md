@@ -203,6 +203,18 @@ If selected model test fails, the add-on may successfully validate via `openrout
 - Provider/API/parsing failure: shows `N/A` (not a fake numeric score)
 - Keeps failure details in feedback text for easier troubleshooting
 
+## Runtime Layout
+
+Runtime now ships as one small bootstrap plus focused modules:
+
+- `__init__.py`: bootstrap and re-export surface only
+- `locales.py`: UI text and language registry SSOT
+- `config_model.py`: config normalization, providers, prompt-default loading
+- `ai_runtime.py`: provider HTTP and NotebookLM runtime boundary
+- `reviewer_ui.py`: reviewer rendering, hooks, and mutable review state
+
+Use `scripts/sync_to_anki.ps1` to copy full runtime surface, including `configs/prompt_defaults.json`.
+
 ## Troubleshooting
 
 ### "Connection error" or "Provider returned error"

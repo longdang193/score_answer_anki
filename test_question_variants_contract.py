@@ -217,6 +217,15 @@ def main():
     assert 'ta.rows=6;' in fallback_rendered
     assert "ta.style.minHeight='132px';" in fallback_rendered
 
+    non_score_card = DummyCard(card_id=11, rendered_question="13 * 17 = ? [[type:Back]]")
+    non_score_note = non_score_card.note()
+    non_score_note.model = lambda: {"tmpls": [{"name": "basic"}]}
+    non_score_native = addon._to_textarea_on_question('<input id="typeans" type="text" value="">', non_score_card, "Question")
+    assert 'aqi-type-input-wrap' not in non_score_native
+    assert 'aqi-review-footer' not in non_score_native
+    assert '<textarea' not in non_score_native
+    assert '<input id="typeans" type="text" value="">' in non_score_native
+
     plain_rendered = addon._to_textarea_on_question('<div>plain</div>', card, "Answer")
     assert 'aqi-type-input-wrap' not in plain_rendered
     assert 'aqi-insert-tab-btn' not in plain_rendered

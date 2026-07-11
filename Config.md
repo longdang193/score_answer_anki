@@ -26,6 +26,18 @@ This Anki add-on enhances your flashcard review experience by providing intellig
 - **Efficiency**: Focus more time on concepts you struggle with
 - **Motivation**: Positive reinforcement when you're improving
 
+## Runtime Layout
+
+Shipped add-on runtime is split but still loads as one add-on surface:
+
+- `__init__.py` keeps bootstrap only
+- `locales.py` owns language and UI text registries
+- `config_model.py` owns config defaults, normalization, providers, and prompt defaults
+- `ai_runtime.py` owns provider HTTP calls and NotebookLM session helpers
+- `reviewer_ui.py` owns reviewer hooks, render helpers, and mutable review state
+
+If you sync manually, use `scripts/sync_to_anki.ps1` so `configs/prompt_defaults.json` ships with module files.
+
 ## Configuration Options
 
 ⚠️ :  <b>After setup config it's mandatory to restart anki<b>
