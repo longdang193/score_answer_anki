@@ -963,6 +963,117 @@ def main():
     assert api_calls[-1]["model"] == "cx/gpt-5.5"
     assert addon.current_analysis_context["analysis_mode"] == "deep"
     assert addon.current_analysis_context["cache_key"] == deep_cache_key
+    notebooklm_source = read_addon_source()
+    assert "Use NotebookLM MCP" in notebooklm_source
+    assert "Refresh NotebookLM Session" in notebooklm_source
+    assert "Refresh Notebook List" in notebooklm_source
+    assert "Target Notebook" in notebooklm_source
+
+    addon.save_config(
+        {
+            "general": {
+                "language": "english",
+                "show_anki_compare": True,
+                "show_code_compare": True,
+            },
+            "modes": {
+                "standard": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.4-mini",
+                    "prompt_profile": "strict_stem",
+                    "max_tokens": 100,
+                    "temperature": 0.7,
+                },
+                "deep": {
+                    "enabled": True,
+                    "provider": "custom_openai",
+                    "model": "cx/gpt-5.5",
+                    "prompt_profile": "speaking_flexible",
+                    "max_tokens": 300,
+                    "temperature": 0.4,
+                    "use_notebooklm": True,
+                    "notebook_id": "nb-123",
+                    "notebook_title": "Notebook One",
+                },
+            },
+            "providers": {
+                "custom_openai": {
+                    "base_url": "http://127.0.0.1:20128/v1",
+                    "api_key": "",
+                    "custom_models": ["cx/gpt-5.4-mini", "cx/gpt-5.5"],
+                }
+            },
+        }
+    )
+    notebooklm_runtime = addon.resolve_ai_runtime_config(addon.get_config(), analysis_mode="deep")
+    assert notebooklm_runtime["mode_settings"]["use_notebooklm"] is True
+    assert notebooklm_runtime["mode_settings"]["notebook_id"] == "nb-123"
+    assert notebooklm_runtime["mode_settings"]["notebook_title"] == "Notebook One"
+
+    notebooklm_request = addon.build_analysis_request(mw.reviewer.card, "17", "deep")
+    assert notebooklm_request["use_notebooklm"] is True
+    assert notebooklm_request["notebook_id"] == "nb-123"
+    assert notebooklm_request["notebook_title"] == "Notebook One"
+    notebooklm_disabled_request = dict(notebooklm_request)
+    notebooklm_disabled_request["use_notebooklm"] = False
+    notebooklm_disabled_request["notebook_id"] = ""
+    notebooklm_disabled_request["notebook_title"] = ""
+    assert addon.build_analysis_request_cache_key(mw.reviewer.card, notebooklm_request) != addon.build_analysis_request_cache_key(mw.reviewer.card, notebooklm_disabled_request)
+
+    listed_notebooks = []
+    queried_notebooks = []
+    notebooklm_prompts = []
+    original_list_notebooklm_notebooks = addon.list_notebooklm_notebooks
+    addon.list_notebooklm_notebooks = lambda *args, **kwargs: listed_notebooks.append((args, kwargs)) or []
+    addon.query_notebooklm_context = lambda notebook_id, query_text, timeout_s=None: queried_notebooks.append((notebook_id, query_text, timeout_s)) or "NotebookLM confirms 221 is correct."
+    addon.call_ai_api = lambda **kwargs: notebooklm_prompts.append(kwargs["messages"][-1]["content"]) or '{"score": 8, "tips": "Good."}'
+    notebooklm_result = addon.analyze_answer_request(notebooklm_request, card=mw.reviewer.card)
+    assert queried_notebooks and queried_notebooks[-1][0] == "nb-123"
+    assert listed_notebooks == []
+    assert notebooklm_result["sources_used"] == ["notebooklm"]
+    assert notebooklm_result["warnings"] == []
+    assert "NotebookLM" in notebooklm_prompts[-1]
+
+    normalized_context, was_trimmed = addon.normalize_notebooklm_context_text("A  \n" * 5000)
+    assert len(normalized_context) <= 4000
+    assert was_trimmed is True
+
+    missing_notebook_request = dict(notebooklm_request)
+    missing_notebook_request["notebook_id"] = ""
+    missing_notebook_request["notebook_title"] = ""
+    addon.call_ai_api = lambda **kwargs: '{"score": 5, "tips": "Fallback."}'
+    missing_notebook_result = addon.analyze_answer_request(missing_notebook_request, card=mw.reviewer.card)
+    assert any("no target notebook selected" in warning.lower() for warning in missing_notebook_result["warnings"])
+    assert missing_notebook_result["sources_used"] == []
+
+    addon.list_notebooklm_notebooks = original_list_notebooklm_notebooks
+
+    original_start_notebooklm_session = addon._start_notebooklm_session
+    original_stop_notebooklm_session = addon._stop_notebooklm_session
+    original_notebooklm_tool_call = addon._notebooklm_tool_call
+    addon._start_notebooklm_session = lambda: {"proc": object(), "next_id": 2}
+    addon._stop_notebooklm_session = lambda session: None
+    addon._notebooklm_tool_call = lambda session, name, arguments, timeout_s: {"result": {"structuredContent": {"status": "error", "error": "RPC Error 16: Authentication expired"}}}
+    try:
+        addon.list_notebooklm_notebooks()
+        raise AssertionError("Expected notebook_list error to raise")
+    except RuntimeError as exc:
+        assert "Authentication expired" in str(exc)
+    finally:
+        addon._start_notebooklm_session = original_start_notebooklm_session
+        addon._stop_notebooklm_session = original_stop_notebooklm_session
+        addon._notebooklm_tool_call = original_notebooklm_tool_call
+
+    install_sync_background(mw)
+    addon.query_notebooklm_context = lambda notebook_id, query_text, timeout_s=None: "NotebookLM confirms 221."
+    addon.call_ai_api = lambda **kwargs: '{"score": 9, "tips": "Deep with NotebookLM."}'
+    notebooklm_cache_key = addon.build_analysis_request_cache_key(mw.reviewer.card, notebooklm_request)
+    addon.invalidate_analysis_state(notebooklm_cache_key)
+    addon.store_ai_analysis(("221", "17"), "[[type:Back]]", analysis_mode="deep")
+    assert addon.analysis_results[notebooklm_cache_key]["score"] == 9
+    assert notebooklm_cache_key not in addon.ai_analysis_cache
+
     addon.save_config(previous_config)
 
     plain_card = DummyCard(model_name="card_1")

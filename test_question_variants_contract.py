@@ -35,7 +35,9 @@ class DummyAddonManager:
 
 
 class DummyNote(dict):
-    pass
+    def model(self):
+        return {"tmpls": [{"name": "basic_score"}]}
+
 
 
 class DummyCard:
@@ -152,9 +154,21 @@ def main():
     assert addon.evaluate_question_variant_compatibility("17 * 13 = ?", canonical_answer, answer_pool) == "compatible"
     assert addon.evaluate_question_variant_compatibility("221 = 13 * ?", canonical_answer, answer_pool) == "incompatible"
     assert addon.evaluate_question_variant_compatibility("Capital of France?", "Paris", ["Paris"]) == "unsupported"
+    assert addon._safe_eval_arithmetic('2**3') == 8.0
+    try:
+        addon._safe_eval_arithmetic('2**99')
+        raise AssertionError('expected bounded exponent rejection')
+    except ValueError:
+        pass
+    assert addon.evaluate_question_variant_compatibility('1 / (? - 3) = 1', '3', ['3']) == 'unsupported'
+
 
     eligible = addon.get_eligible_question_variants(card)
     assert eligible == ["13 * 17 = ?", "17 * 13 = ?"]
+
+    active_sig = addon._build_active_question_signature(card)
+    assert active_sig[1] == addon._cache_hash(addon.build_visible_question_pool(card))
+    assert active_sig[2] == addon._cache_hash(addon.build_accepted_answer_pool(card)[1])
 
     chosen = addon.get_or_choose_active_question_variant(card, rng=second_choice)
     assert chosen == "17 * 13 = ?"
@@ -164,9 +178,60 @@ def main():
     assert "17 * 13 = ?" in rendered
     assert "13 * 17 = ?" in rendered
     assert "221 = 13 * ?" not in rendered
-    assert "sqv-active-question" in rendered
-    assert "sqv-choice-list" in rendered
+    assert "aqi-active-question" in rendered
+    assert "aqi-choice-list" in rendered
     assert "#ffffff" not in rendered
+
+    multiline_rendered = addon._to_textarea_on_question('<input id="typeans" type="text" value="">', card, "Question")
+    assert 'class="aqi-type-input-wrap"' in multiline_rendered
+    assert 'data-aqi-type-toolbar="1"' in multiline_rendered
+    assert 'aqi-insert-tab-btn' in multiline_rendered
+    assert 'aqi-ai-action-btn' in multiline_rendered
+    assert 'Insert Tab' in multiline_rendered
+    assert 'function insertTabIntoTextarea(ta)' in multiline_rendered
+    assert "ta.addEventListener('keydown',onEnter,true);" in multiline_rendered
+    assert "['keydown','keypress','keyup'].forEach(function(t){ ta.addEventListener(t,onEnter,true); });" not in multiline_rendered
+    assert 'if(e.shiftKey){ e.stopImmediatePropagation(); e.stopPropagation(); e.preventDefault();' in multiline_rendered
+    assert 'if(e.ctrlKey||e.metaKey){ e.stopImmediatePropagation(); e.stopPropagation(); e.preventDefault();' not in multiline_rendered
+    assert "if(e.key==='Tab'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){ e.preventDefault(); insertTabIntoTextarea(ta);" in multiline_rendered
+    assert 'if(e.key===\"Enter\"){ ' not in multiline_rendered
+    assert "var(--aqi-font-body)" in multiline_rendered
+    assert "ui-monospace" not in multiline_rendered
+    assert 'aqi-review-footer' in multiline_rendered
+    assert 'function getReviewerScrollRoot()' in multiline_rendered
+    assert 'function syncTypedAnswerFooter()' in multiline_rendered
+    assert 'function syncTypedAnswerFooterOffset()' in multiline_rendered
+    assert 'function measureTypedAnswerFooterGeometry()' in multiline_rendered
+    assert 'rows="6"' in multiline_rendered
+    assert 'min-height:132px' in multiline_rendered
+
+    attr_rendered = addon._to_textarea_on_question('<input id="typeans" type="text" value="" onkeypress="pycmd(\'ans\')" onkeydown="pycmd(\'ans\')" onkeyup="pycmd(\'ans\')">', card, "Question")
+    assert 'onkeypress=' not in attr_rendered
+    assert 'onkeydown=' not in attr_rendered
+    assert 'onkeyup=' not in attr_rendered
+
+    value_rendered = addon._to_textarea_on_question('<input id="typeans" type="text" value="my">', card, "Question")
+    assert '>my</textarea>' in value_rendered
+
+    fallback_rendered = addon._to_textarea_on_question('<div>plain</div>', card, "Question")
+    assert 'ta.rows=6;' in fallback_rendered
+    assert "ta.style.minHeight='132px';" in fallback_rendered
+
+    plain_rendered = addon._to_textarea_on_question('<div>plain</div>', card, "Answer")
+    assert 'aqi-type-input-wrap' not in plain_rendered
+    assert 'aqi-insert-tab-btn' not in plain_rendered
+
+    question_caps = addon.get_card_capabilities(card, card.question(), "Question")
+    assert question_caps["scoreable"] is True
+    assert question_caps["typed_question_input"] is True
+    assert question_caps["front_hint"] is True
+    assert question_caps["answer_compare"] is False
+
+    answer_caps = addon.get_card_capabilities(card, card.question(), "Answer")
+    assert answer_caps["scoreable"] is True
+    assert answer_caps["typed_question_input"] is False
+    assert answer_caps["front_hint"] is False
+    assert answer_caps["answer_compare"] is True
 
     class Reviewer:
         pass
@@ -175,24 +240,80 @@ def main():
     addon.inject_multiline_type_input(web_content, Reviewer())
     assert '@import url("_card-base-shared.css")' in web_content.head
     assert ".aqi-panel-title" in web_content.head
-    assert "font-size: 18px;" in web_content.head
+    assert "--aqi-title-size: 18px;" in web_content.head
+    assert "font-size: var(--aqi-title-size);" in web_content.head
     assert "font-family: var(--aqi-font-body) !important;" in web_content.head
-    assert "gap: 8px;" in web_content.head
+    assert "--aqi-gap-sm: 8px;" in web_content.head
+    assert "gap: var(--aqi-gap-sm);" in web_content.head
     assert "margin-bottom: 8px;" in web_content.head
     assert "padding: 16px;" in web_content.head
-    assert "width: 38px;" in web_content.head
-    assert "height: 38px;" in web_content.head
+    assert "--aqi-icon-button-size: 38px;" in web_content.head
+    assert "width: var(--aqi-icon-button-size);" in web_content.head
+    assert "height: var(--aqi-icon-button-size);" in web_content.head
     assert "display: inline-flex;" in web_content.head
     assert "justify-content: center;" in web_content.head
     assert "font-size: 24px;" in web_content.head
-    assert "--sqv-question-fg" in web_content.head
-    assert "--sqv-input-bg" in web_content.head
+    assert "--aqi-question-fg" in web_content.head
+    assert "--aqi-variant-chip-bg" in web_content.head
+    assert "--aqi-input-bg" in web_content.head
+    assert "--sqv-question-fg: var(--aqi-question-fg);" in web_content.head
+    assert "--sqv-input-bg: var(--aqi-input-bg);" in web_content.head
     assert "#typeans" in web_content.head
+    assert ".aqi-type-input-wrap" in web_content.head
+    assert ".aqi-ai-action-btn" in web_content.head
+    assert ".aqi-type-input-wrap > .aqi-ai-action-btn" in web_content.head
+    assert "#aqi-review-footer" in web_content.head
+    assert ".aqi-review-footer__content" in web_content.head
+    assert "--aqi-review-footer-offset" in web_content.head
+    assert "padding-bottom: calc(var(--aqi-review-footer-offset)" in web_content.head
+    assert "--aqi-overlay-surface-bg" in web_content.head
+    assert "--aqi-overlay-panel-bg" in web_content.head
+    assert '#aqi-review-footer .aqi-front-hint-card[data-score-tier="na"]' in web_content.head
+    assert "#aqi-review-footer .aqi-panel-body" in web_content.head
     normalized_head = web_content.head.replace("\r\n", "\n")
+    assert "--aqi-overlay-surface-bg: #1f2937;" in normalized_head
+    assert "--aqi-overlay-panel-bg: #111827;" in normalized_head
+    assert ".aqi-insert-tab-btn {" not in web_content.head
+    assert "function insertTabIntoTextarea(ta)" not in web_content.head
+    assert "function upgradeTypeAnswer()" not in web_content.head
+    assert "MutationObserver" not in web_content.head
+    normalized_head = web_content.head.replace("\r\n", "\n")
+    assert ".aqi-front-hint-toggle {\n  appearance: none;" in normalized_head
+    assert ".aqi-front-hint-toggle {\n  margin-bottom: 12px;" not in normalized_head
     assert ".sqv-active-question {\n  font-size: clamp(28px, 5vw, 36px);" not in normalized_head
-    assert ".sqv-active-question {\n  font-family: var(--aqi-font-body) !important;" not in normalized_head
+    assert ".aqi-active-question,\n.sqv-active-question {\n  font-family: inherit;" in normalized_head
     assert ".sqv-question-block {\n  margin: 0 auto 18px auto;\n  max-width: 780px;\n  text-align: center;" not in normalized_head
-    assert ".sqv-choice-list {\n  text-align: center;" in normalized_head
+    assert ".aqi-compare .aqi-compare-pre + .aqi-choice-list,\n.aqi-compare .aqi-compare-pre + .sqv-choice-list,\n.ak-compare .ak-pre + .aqi-choice-list,\n.ak-compare .ak-pre + .sqv-choice-list {\n  margin-top: 6px;" in normalized_head
+    assert ".aqi-choice-list,\n.sqv-choice-list {\n  font-family: inherit;\n  text-align: center;" in normalized_head
+    assert "color: var(--aqi-question-muted) !important;" in normalized_head
+    assert ".aqi-choice-chip,\n.sqv-choice-chip {\n  font-family: inherit;" in normalized_head
+    assert "background: var(--aqi-variant-chip-bg) !important;" in normalized_head
+    assert "border: 1px solid var(--aqi-variant-chip-border) !important;" in normalized_head
+    assert "background: var(--aqi-input-bg) !important;" in normalized_head
+    assert "color: var(--aqi-input-fg) !important;" in normalized_head
+    assert "border: 1px solid var(--aqi-input-border) !important;" in normalized_head
+    assert ".aqi-compare .aqi-compare-pre,\n.ak-compare .ak-pre {" in normalized_head
+    assert "font-family: var(--aqi-font-body) !important;" in normalized_head
+    assert "Liberation Mono" not in normalized_head
+    assert ".aqi-rich-copy code {\n  font-family: inherit;" in normalized_head
+    assert ".aqi-compare .aqi-compare-pre,\n.ak-compare .ak-pre {" in normalized_head
+    assert "font-family: var(--aqi-font-body) !important;" in normalized_head
+    assert "Liberation Mono" not in normalized_head
+
+    rich_variant_card = DummyCard(
+        card_id=10,
+        note_fields={
+            "Front": "What is your name?",
+            "Front_variants": "Who are you?",
+            "Back": "My name is Long",
+            "Back_variants": "<b>Long</b>;;[sound:name.mp3];;   ;;Long",
+        },
+    )
+    rich_display_model = addon.build_expected_display_model(rich_variant_card, "My name is Long")
+    assert rich_display_model == {
+        "primary_expected": "My name is Long",
+        "alternative_expected_answers": ["Long"],
+    }
 
     invalid_card = DummyCard(
         card_id=2,
@@ -249,3 +370,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

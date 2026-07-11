@@ -141,10 +141,10 @@ Phase 1 owns:
 
 Phase 1 required settings topology:
 
-- `General` tab owns shared review/UI settings only
+- `General` tab owns shared review/UI settings and shared custom prompt fields only
 - `Standard` tab owns standard-mode runtime settings only
 - `Deep` tab owns deep-mode runtime settings only
-- `Providers` tab owns shared provider connection settings only
+- `Providers` tab owns shared provider connection settings, provider-scoped custom model registry, and connection-test action only
 
 Phase 1 ownership rules:
 
@@ -181,16 +181,22 @@ Phase 2 owns:
 
 - NotebookLM enable checkbox for deep mode settings
 - NotebookLM auth / refresh-session control
-- notebook selector UI
-- notebook identity persistence by `notebook_id`
+- notebook selector UI bound to canonical nested deep-mode config
+- notebook identity persistence inside `modes.deep` with `notebook_id` as lookup SSOT and `notebook_title` as display-only metadata
 - optional context retrieval before deep-model call or as part of deep-analysis orchestration
 - fallback behavior when NotebookLM is unavailable
 
 Phase 2 required config additions:
 
-- `deep_analysis_use_notebooklm`
-- `deep_analysis_notebook_id`
-- `deep_analysis_notebook_title`
+- `modes.deep.use_notebooklm`
+- `modes.deep.notebook_id`
+- `modes.deep.notebook_title`
+
+Rules:
+
+- NotebookLM config extends the canonical nested mode block instead of adding new flat top-level truth
+- `notebook_title` stays display-only metadata
+- provider-owned settings remain under `providers.*`; NotebookLM does not create a second provider-like config surface
 
 Phase 2 runtime rules:
 
@@ -215,7 +221,7 @@ This master spec requires two child detailed specs.
 Phase 1 detailed spec must define exactly:
 
 - four-tab settings topology and ownership boundaries
-- mode and provider config migration from legacy flat keys
+- mode and provider config migration from legacy flat keys into canonical nested `general` / `modes` / `providers`
 - exact fallback rules for disabled deep mode and blank deep model
 - exact request builder and cache-key field list
 - exact panel badge / action-label policy for deep results

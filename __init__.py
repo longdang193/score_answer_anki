@@ -2,9 +2,12 @@ import ast
 import hashlib
 import json
 import html
+import os
 import pathlib
 import random
 import re
+import subprocess
+import time
 from aqt import gui_hooks
 
 
@@ -19,6 +22,29 @@ active_question_state = {}
 front_hint_panel_state = {}
 HINT_PROMPT_VERSION = "v1"
 ANALYSIS_PROMPT_VERSION = "v1"
+NOTEBOOKLM_CONTEXT_CHAR_LIMIT = 4000
+NOTEBOOKLM_QUERY_TIMEOUT_SECONDS = 45.0
+NOTEBOOKLM_TOOL_TIMEOUT_SECONDS = 30.0
+NOTEBOOKLM_CLIENT_INFO = {"name": "score_answer_anki", "version": "0.1"}
+notebooklm_runtime_state = {"status": "Not checked", "message": "", "notebooks": []}
+NOTEBOOKLM_AUTH_ERROR_MARKERS = (
+    "authentication expired",
+    "rpc error 16",
+    "client error '400 bad request'",
+    "https://notebooklm.google.com/_/labstailwindui/data/batchexecute",
+)
+NOTEBOOKLM_NETWORK_ERROR_MARKERS = (
+    "handshake operation timed out",
+    "read operation timed out",
+    "getaddrinfo failed",
+    "forcibly closed by the remote host",
+    "server disconnected without sending a response",
+    "connection reset by peer",
+    "peer closed connection",
+    "incomplete chunked read",
+    "incomplete message body",
+    "remote end closed connection",
+)
 
 HINT_UI_TEXTS = {
     "english": {
@@ -1099,6 +1125,9 @@ def make_analysis_unavailable(reason: str, language: str = "english") -> dict:
         "scored": False,
         "score": None,
         "tips": tips,
+        "warnings": [],
+        "sources_used": [],
+        "context_sources": [],
     }
 
 def make_variant_mismatch_result(reason: str, language: str = "english") -> dict:
@@ -1110,7 +1139,271 @@ def make_variant_mismatch_result(reason: str, language: str = "english") -> dict
         "score": None,
         "tips": f"{base}: {details}",
         "status": "variant_mismatch",
+        "warnings": [],
+        "sources_used": [],
+        "context_sources": [],
     }
+
+def merge_analysis_warnings(tips: str, warnings: list[str]) -> str:
+    clean_warnings = [str(item or "").strip() for item in (warnings or []) if str(item or "").strip()]
+    tips_text = str(tips or "").strip()
+    if not clean_warnings:
+        return tips_text
+    warning_block = "Warnings:\n- " + "\n- ".join(clean_warnings)
+    return f"{tips_text}\n\n{warning_block}" if tips_text else warning_block
+
+def normalize_notebooklm_context_text(text: str, limit: int = NOTEBOOKLM_CONTEXT_CHAR_LIMIT) -> tuple[str, bool]:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not normalized:
+        return "", False
+    if len(normalized) <= limit:
+        return normalized, False
+    return normalized[:limit].rstrip(), True
+
+def build_notebooklm_query_text(request: dict) -> str:
+    accepted_answers = request.get("accepted_answers") or []
+    return (
+        "Review this learner answer with concise source-grounded context only.\n\n"
+        f"Question: {request.get('question_text', '')}\n"
+        f"Expected answer: {request.get('canonical_answer', '')}\n"
+        f"Accepted answers: {accepted_answers}\n"
+        f"Student answer: {request.get('user_answer', '')}\n"
+        f"Language: {request.get('language', '')}\n\n"
+        "Return short reference context that helps judge correctness, acceptable variants, and major omissions. Do not score the answer."
+    )
+
+def _notebooklm_send(proc, msg: dict) -> None:
+    if not proc.stdin:
+        raise RuntimeError("NotebookLM MCP stdin unavailable")
+    proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
+    proc.stdin.flush()
+
+def _notebooklm_recv(proc, timeout_s: float) -> dict:
+    if not proc.stdout:
+        raise RuntimeError("NotebookLM MCP stdout unavailable")
+    started = time.time()
+    while time.time() - started < timeout_s:
+        line = proc.stdout.readline()
+        if not line:
+            continue
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    raise TimeoutError("NotebookLM MCP response timeout")
+
+def _notebooklm_subprocess_kwargs(hide_window: bool = True) -> dict:
+    kwargs = {}
+    if hide_window and os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return kwargs
+
+def _start_notebooklm_session():
+    proc = subprocess.Popen(
+        ["notebooklm-mcp", "--transport", "stdio"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        **_notebooklm_subprocess_kwargs(),
+    )
+    _notebooklm_send(
+        proc,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+                "clientInfo": NOTEBOOKLM_CLIENT_INFO,
+            },
+        },
+    )
+    _notebooklm_recv(proc, 20.0)
+    _notebooklm_send(proc, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
+    return {"proc": proc, "next_id": 2}
+
+def _stop_notebooklm_session(session) -> None:
+    proc = (session or {}).get("proc") if isinstance(session, dict) else None
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+
+def _notebooklm_tool_call(session, name: str, arguments: dict, timeout_s: float) -> dict:
+    call_id = session["next_id"]
+    session["next_id"] += 1
+    _notebooklm_send(
+        session["proc"],
+        {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        },
+    )
+    return _notebooklm_recv(session["proc"], timeout_s)
+
+def _notebooklm_response_json(resp: dict) -> dict:
+    result = resp.get("result", {}) if isinstance(resp, dict) else {}
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+    content = result.get("content", []) if isinstance(result, dict) else []
+    text_value = "".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")
+    if not text_value.strip():
+        return {}
+    try:
+        parsed = json.loads(text_value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+def _notebooklm_require_success_payload(resp: dict, tool_name: str) -> dict:
+    payload = _notebooklm_response_json(resp)
+    if not isinstance(payload, dict):
+        return {}
+    status_text = str(payload.get("status", "") or "").strip().lower()
+    if not status_text or status_text == "success":
+        return payload
+    error_text = str(payload.get("error") or payload.get("message") or payload).strip() or "unknown NotebookLM error"
+    raise RuntimeError(f"{tool_name} failed: {error_text}")
+
+def _normalize_notebooklm_error_text(text: str) -> str:
+    return " ".join(str(text or "").casefold().split())
+
+def classify_notebooklm_error(text: str) -> str:
+    normalized = _normalize_notebooklm_error_text(text)
+    if any(marker in normalized for marker in NOTEBOOKLM_AUTH_ERROR_MARKERS):
+        return "auth"
+    if any(marker in normalized for marker in NOTEBOOKLM_NETWORK_ERROR_MARKERS):
+        return "network"
+    return "other"
+
+def _notebooklm_status_from_error(text: str) -> str:
+    return "Auth required" if classify_notebooklm_error(text) == "auth" else "Error"
+
+def _normalize_notebooklm_notebooks(payload: dict) -> list[dict]:
+    notebooks = payload.get("notebooks", []) if isinstance(payload, dict) else []
+    normalized = []
+    for item in notebooks if isinstance(notebooks, list) else []:
+        if not isinstance(item, dict):
+            continue
+        notebook_id = str(item.get("id", "") or "").strip()
+        title = str(item.get("title", "") or notebook_id).strip()
+        if notebook_id:
+            normalized.append({"id": notebook_id, "title": title})
+    return normalized
+
+def _build_notebooklm_auth_env() -> dict:
+    env = os.environ.copy()
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        if env.get(key):
+            env[key] = ""
+    return env
+
+def run_notebooklm_auth_command() -> int:
+    proc = subprocess.run(["notebooklm-mcp-auth"], env=_build_notebooklm_auth_env())
+    return int(proc.returncode)
+
+def _notebooklm_response_text(resp: dict) -> str:
+    result = resp.get("result", {}) if isinstance(resp, dict) else {}
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict) and isinstance(structured.get("answer"), str):
+        return structured.get("answer", "")
+    content = result.get("content", []) if isinstance(result, dict) else []
+    text_value = "".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")
+    if not text_value.strip():
+        return ""
+    try:
+        parsed = json.loads(text_value)
+    except Exception:
+        return text_value
+    if isinstance(parsed, dict) and isinstance(parsed.get("answer"), str):
+        return parsed.get("answer", "")
+    return text_value
+
+def refresh_notebooklm_session() -> dict:
+    session = None
+    try:
+        session = _start_notebooklm_session()
+        resp = _notebooklm_tool_call(session, "refresh_auth", {}, NOTEBOOKLM_TOOL_TIMEOUT_SECONDS)
+        payload = _notebooklm_require_success_payload(resp, "refresh_auth")
+        list_resp = _notebooklm_tool_call(session, "notebook_list", {"max_results": 200}, 60.0)
+        list_payload = _notebooklm_require_success_payload(list_resp, "notebook_list")
+        notebooks = _normalize_notebooklm_notebooks(list_payload)
+        notebooklm_runtime_state.update({
+            "status": "Ready",
+            "message": str(payload.get("message", "") or "").strip(),
+            "notebooks": notebooks,
+        })
+    except FileNotFoundError:
+        notebooklm_runtime_state.update({"status": "Error", "message": "notebooklm-mcp not found", "notebooks": []})
+    except Exception as exc:
+        message = str(exc or "").strip()
+        notebooklm_runtime_state.update({"status": _notebooklm_status_from_error(message), "message": message, "notebooks": []})
+    finally:
+        _stop_notebooklm_session(session)
+    return dict(notebooklm_runtime_state)
+
+def reauth_notebooklm_session() -> dict:
+    try:
+        returncode = run_notebooklm_auth_command()
+    except FileNotFoundError:
+        notebooklm_runtime_state.update({"status": "Error", "message": "notebooklm-mcp-auth not found", "notebooks": []})
+        return dict(notebooklm_runtime_state)
+    if returncode != 0:
+        notebooklm_runtime_state.update({"status": "Auth required", "message": "NotebookLM re-auth canceled or failed.", "notebooks": []})
+        return dict(notebooklm_runtime_state)
+    return refresh_notebooklm_session()
+
+def list_notebooklm_notebooks(max_results: int = 200) -> list[dict]:
+    session = None
+    try:
+        session = _start_notebooklm_session()
+        resp = _notebooklm_tool_call(session, "notebook_list", {"max_results": max_results}, 60.0)
+        payload = _notebooklm_require_success_payload(resp, "notebook_list")
+        normalized = _normalize_notebooklm_notebooks(payload)
+        notebooklm_runtime_state.update({"status": "Ready", "notebooks": normalized, "message": ""})
+        return normalized
+    except Exception as exc:
+        message = str(exc or "").strip()
+        notebooklm_runtime_state.update({"status": _notebooklm_status_from_error(message), "message": message, "notebooks": []})
+        raise
+    finally:
+        _stop_notebooklm_session(session)
+
+def query_notebooklm_context(notebook_id: str, query_text: str, timeout_s: float | None = None) -> str:
+    notebook_id = str(notebook_id or "").strip()
+    if not notebook_id:
+        raise ValueError("NotebookLM notebook_id is required")
+    session = None
+    try:
+        session = _start_notebooklm_session()
+        timeout_value = float(timeout_s or NOTEBOOKLM_QUERY_TIMEOUT_SECONDS)
+        resp = _notebooklm_tool_call(
+            session,
+            "notebook_query",
+            {"notebook_id": notebook_id, "query": query_text, "timeout": int(timeout_value)},
+            timeout_value + 15.0,
+        )
+        _notebooklm_require_success_payload(resp, "notebook_query")
+        answer = _notebooklm_response_text(resp).strip()
+        if not answer:
+            raise RuntimeError("NotebookLM returned empty context")
+        return answer
+    finally:
+        _stop_notebooklm_session(session)
 
 def build_analysis_prompt_payload(card, user_answer: str) -> dict:
     contract = build_answer_contract(card)
@@ -1173,6 +1466,8 @@ def build_analysis_cache_key(
     accepted_answers: list[str] | None = None,
     resolved_prompt_contract: str = "",
     analysis_prompt_version: str = ANALYSIS_PROMPT_VERSION,
+    use_notebooklm: bool = False,
+    notebook_id: str = "",
 ) -> str:
     return "_".join(
         _build_ai_cache_base_parts(
@@ -1191,6 +1486,8 @@ def build_analysis_cache_key(
             _cache_hash(user_answer),
             _cache_hash(accepted_answers or []),
             _cache_hash(analysis_prompt_version),
+            _cache_hash(bool(use_notebooklm)),
+            _cache_hash(str(notebook_id or "")),
         ]
     )
 
@@ -1225,7 +1522,9 @@ def store_ai_analysis(expected_provided_tuple, type_pattern, analysis_mode: str 
         }
     )
 
-    if cache_key in ai_analysis_cache:
+    persist_cache = not (request["analysis_mode"] == "deep" and bool(request.get("use_notebooklm", False)))
+
+    if persist_cache and cache_key in ai_analysis_cache:
         print(f"Using cached analysis for {cache_key}")
         return expected_provided_tuple
 
@@ -1264,7 +1563,10 @@ def store_ai_analysis(expected_provided_tuple, type_pattern, analysis_mode: str 
             result = dict(result)
             result["analysis_mode"] = request["analysis_mode"]
             result["standard_cache_key"] = standard_cache_key
-        ai_analysis_cache[cache_key] = result
+        if persist_cache:
+            ai_analysis_cache[cache_key] = result
+        else:
+            ai_analysis_cache.pop(cache_key, None)
         analysis_results[cache_key] = result
         print(f"AI analysis completed (bg) for {cache_key}")
 
@@ -1528,6 +1830,9 @@ def resolve_ai_runtime_config(config=None, language: str | None = None, analysis
 def build_analysis_request(card, user_answer: str, analysis_mode: str = "standard") -> dict:
     payload = build_analysis_prompt_payload(card, user_answer)
     runtime = resolve_ai_runtime_config(get_config(), analysis_mode=analysis_mode)
+    use_notebooklm = bool(runtime["mode_settings"].get("use_notebooklm", False)) if runtime["analysis_mode"] == "deep" else False
+    notebook_id = str(runtime["mode_settings"].get("notebook_id", "") or "").strip() if use_notebooklm else ""
+    notebook_title = str(runtime["mode_settings"].get("notebook_title", "") or "").strip() if use_notebooklm else ""
     return {
         "analysis_mode": runtime["analysis_mode"],
         "question_text": payload["question_text"],
@@ -1543,9 +1848,9 @@ def build_analysis_request(card, user_answer: str, analysis_mode: str = "standar
         "max_tokens": runtime["max_tokens"],
         "temperature": runtime["temperature"],
         "availability_reason": runtime["availability_reason"],
-        "use_notebooklm": False,
-        "notebook_id": "",
-        "notebook_title": "",
+        "use_notebooklm": use_notebooklm,
+        "notebook_id": notebook_id,
+        "notebook_title": notebook_title,
         "context_sources": [],
     }
 
@@ -1569,6 +1874,8 @@ def build_analysis_request_cache_key(card, request: dict, config=None) -> str:
         accepted_answers=request.get("accepted_answers") or [],
         resolved_prompt_contract=build_prompt_contract_hash(merged_config, language, prompt_profile, "analysis"),
         analysis_prompt_version=ANALYSIS_PROMPT_VERSION,
+        use_notebooklm=bool(request.get("use_notebooklm", False)),
+        notebook_id=str(request.get("notebook_id", "") or "").strip(),
     )
 
 def build_prompt_contract_hash(config, language: str, prompt_profile: str, surface: str = "analysis") -> str:
@@ -3249,7 +3556,7 @@ def _build_default_general_config() -> dict:
 
 def _build_default_mode_config(mode: str) -> dict:
     default_provider = DEFAULT_CONFIG.get("provider", "openai")
-    return {
+    config = {
         "enabled": True if mode == "standard" else False,
         "provider": default_provider,
         "model": _default_provider_model_value(default_provider) if mode == "standard" else "",
@@ -3257,6 +3564,13 @@ def _build_default_mode_config(mode: str) -> dict:
         "max_tokens": DEFAULT_CONFIG.get("max_tokens", 200),
         "temperature": DEFAULT_CONFIG.get("temperature", 0.7),
     }
+    if mode == "deep":
+        config.update({
+            "use_notebooklm": False,
+            "notebook_id": "",
+            "notebook_title": "",
+        })
+    return config
 
 
 def _build_default_providers_config() -> dict:
@@ -3351,6 +3665,9 @@ def merge_config_with_defaults(config):
         "prompt_profile": deep_profile,
         "max_tokens": int(deep_mode.get("max_tokens", legacy_tokens) or legacy_tokens),
         "temperature": float(deep_mode.get("temperature", legacy_temperature) or legacy_temperature),
+        "use_notebooklm": bool(deep_mode.get("use_notebooklm", False)),
+        "notebook_id": str(deep_mode.get("notebook_id", "") or "").strip(),
+        "notebook_title": str(deep_mode.get("notebook_title", "") or "").strip(),
     }
 
     for provider_key in PROVIDER_KEYS:
@@ -3932,6 +4249,26 @@ def analyze_answer_request(request: dict, card=None) -> dict:
                 return make_analysis_unavailable(payload.get("invalid_reason") or "Invalid cloze contract", language)
 
     force_exact_match_perfect_score = is_accepted_answer_match(user_answer, accepted_answers, card=card if is_clozeanything_score_template(card) else None)
+    warnings = []
+    context_sources = []
+
+    def finalize_result(result: dict) -> dict:
+        final = dict(result or {})
+        final_warnings = []
+        for item in list(warnings) + list(final.get("warnings") or []):
+            clean_item = str(item or "").strip()
+            if clean_item and clean_item not in final_warnings:
+                final_warnings.append(clean_item)
+        final_sources = []
+        for item in list(context_sources) + list(final.get("sources_used") or []) + list(final.get("context_sources") or []):
+            clean_item = str(item or "").strip()
+            if clean_item and clean_item not in final_sources:
+                final_sources.append(clean_item)
+        final["warnings"] = final_warnings
+        final["sources_used"] = list(final_sources)
+        final["context_sources"] = list(final_sources)
+        final["tips"] = merge_analysis_warnings(final.get("tips", ""), final_warnings)
+        return final
 
     system_message, prompt = build_prompt_profile_content(
         config,
@@ -3944,6 +4281,37 @@ def analyze_answer_request(request: dict, card=None) -> dict:
         front_text_raw=front_text_raw,
         cloze_targets=cloze_targets,
     )
+    use_notebooklm = normalize_analysis_mode(request.get("analysis_mode", "standard")) == "deep" and bool(request.get("use_notebooklm", False))
+    if use_notebooklm:
+        notebook_id = str(request.get("notebook_id", "") or "").strip()
+        if not notebook_id:
+            warnings.append("No target notebook selected for NotebookLM MCP.")
+        else:
+            try:
+                notebook_context = query_notebooklm_context(
+                    notebook_id,
+                    build_notebooklm_query_text(
+                        {
+                            "question_text": question_text,
+                            "canonical_answer": true_answer,
+                            "accepted_answers": accepted_answers,
+                            "user_answer": user_answer,
+                            "language": language,
+                        }
+                    ),
+                    timeout_s=NOTEBOOKLM_QUERY_TIMEOUT_SECONDS,
+                )
+                normalized_context, was_trimmed = normalize_notebooklm_context_text(notebook_context)
+                if normalized_context:
+                    context_sources.append("notebooklm")
+                    prompt += "\n\nNotebookLM context (retrieval-only; supporting reference, not scoring authority):\n" + normalized_context
+                    if was_trimmed:
+                        warnings.append(f"NotebookLM context trimmed to first {NOTEBOOKLM_CONTEXT_CHAR_LIMIT} characters.")
+                else:
+                    warnings.append("NotebookLM returned empty context.")
+            except Exception as exc:
+                warnings.append(f"NotebookLM MCP unavailable: {str(exc or '').strip()}")
+
     prompt += get_language_lock_instruction(language)
 
     messages = [
@@ -3996,7 +4364,7 @@ def analyze_answer_request(request: dict, card=None) -> dict:
                 else:
                     result["sample_answers"] = normalize_ai_analysis_string_list(result.get("sample_answers"))
                     result["question_variants"] = normalize_ai_analysis_string_list(result.get("question_variants"))
-                return result
+                return finalize_result(result)
         except (json.JSONDecodeError, ValueError, KeyError):
             pass
 
@@ -4016,11 +4384,11 @@ def analyze_answer_request(request: dict, card=None) -> dict:
 
         if force_exact_match_perfect_score:
             score = 10
-        return {"scored": True, "score": score, "tips": ai_response[:300] + "..."}
+        return finalize_result({"scored": True, "score": score, "tips": ai_response[:300] + "..."})
 
     except Exception as e:
         print(f"AI Analysis Error: {str(e)}")
-        return make_analysis_unavailable(f"{PROVIDERS[provider]['name']}: {str(e)}", language)
+        return finalize_result(make_analysis_unavailable(f"{PROVIDERS[provider]['name']}: {str(e)}", language))
 
 def analyze_answer_with_ai(question_text: str, true_answer: str, accepted_answers: list[str], user_answer: str, analysis_mode: str = "standard") -> dict:
     """
@@ -4267,6 +4635,99 @@ def setup_config_menu():
             temp_spin.setValue(int(round(float(mode_config.get("temperature", 0.7) or 0.7) * 100)))
             temp_layout.addWidget(temp_spin)
             tab_layout.addLayout(temp_layout)
+
+            notebooklm_checkbox = None
+            notebooklm_combo = None
+            notebooklm_controlled_widgets = []
+
+            if mode_key == "deep":
+                notebooklm_checkbox = QCheckBox("Use NotebookLM MCP")
+                notebooklm_checkbox.setChecked(bool(mode_config.get("use_notebooklm", False)))
+                tab_layout.addWidget(notebooklm_checkbox)
+
+                notebooklm_status = QLabel()
+                notebooklm_status.setWordWrap(True)
+                tab_layout.addWidget(notebooklm_status)
+                notebooklm_buttons = QHBoxLayout()
+                notebooklm_session_button = QPushButton("Refresh NotebookLM Session")
+                notebooklm_auth_button = QPushButton("Re-auth NotebookLM")
+                notebooklm_list_button = QPushButton("Refresh Notebook List")
+                notebooklm_buttons.addWidget(notebooklm_session_button)
+                notebooklm_buttons.addWidget(notebooklm_auth_button)
+                notebooklm_buttons.addWidget(notebooklm_list_button)
+                tab_layout.addLayout(notebooklm_buttons)
+
+                notebooklm_layout = QHBoxLayout()
+                notebooklm_layout.addWidget(QLabel("Target Notebook"))
+                notebooklm_combo = QComboBox()
+                notebooklm_layout.addWidget(notebooklm_combo)
+                tab_layout.addLayout(notebooklm_layout)
+                notebooklm_controlled_widgets = [notebooklm_session_button, notebooklm_auth_button, notebooklm_list_button, notebooklm_combo]
+
+                def update_notebooklm_status_label():
+                    status_text = str(notebooklm_runtime_state.get("status", "Not checked") or "Not checked").strip() or "Not checked"
+                    message = str(notebooklm_runtime_state.get("message", "") or "").strip()
+                    notebooklm_status.setText(f"NotebookLM status: {status_text}" + (f" — {message}" if message else ""))
+
+                def set_notebooklm_choices(notebooks=None):
+                    values = notebooks if isinstance(notebooks, list) else list(notebooklm_runtime_state.get("notebooks", []) or [])
+                    saved_id = str(mode_config.get("notebook_id", "") or "").strip()
+                    saved_title = str(mode_config.get("notebook_title", "") or "").strip()
+                    notebooklm_combo.blockSignals(True)
+                    notebooklm_combo.clear()
+                    notebooklm_combo.addItem("", "")
+                    current_index = 0
+                    for item in values:
+                        if not isinstance(item, dict):
+                            continue
+                        notebook_id = str(item.get("id", "") or "").strip()
+                        title_text = str(item.get("title", "") or notebook_id).strip()
+                        if not notebook_id:
+                            continue
+                        notebooklm_combo.addItem(title_text, notebook_id)
+                        if saved_id and notebook_id == saved_id:
+                            current_index = notebooklm_combo.count() - 1
+                    if saved_id and current_index == 0:
+                        notebooklm_combo.addItem(f"Saved notebook not found ({saved_title or saved_id})", saved_id)
+                        current_index = notebooklm_combo.count() - 1
+                    notebooklm_combo.setCurrentIndex(current_index)
+                    notebooklm_combo.blockSignals(False)
+
+                def refresh_notebooklm_session_action():
+                    state = refresh_notebooklm_session()
+                    set_notebooklm_choices(state.get("notebooks", []))
+                    update_notebooklm_status_label()
+                    if state.get("status") == "Ready":
+                        showInfo("NotebookLM session ready.")
+                    else:
+                        showWarning(f"NotebookLM session: {state.get('status')}" + (f" — {state.get('message')}" if state.get('message') else ""))
+
+                def reauth_notebooklm_session_action():
+                    state = reauth_notebooklm_session()
+                    set_notebooklm_choices(state.get("notebooks", []))
+                    update_notebooklm_status_label()
+                    if state.get("status") == "Ready":
+                        showInfo("NotebookLM re-auth complete.")
+                    else:
+                        showWarning(f"NotebookLM re-auth: {state.get('status')}" + (f" — {state.get('message')}" if state.get('message') else ""))
+
+                def refresh_notebooklm_list_action():
+                    try:
+                        notebooks = list_notebooklm_notebooks()
+                        set_notebooklm_choices(notebooks)
+                        update_notebooklm_status_label()
+                    except Exception as exc:
+                        notebooklm_runtime_state.update({"status": _notebooklm_status_from_error(str(exc or "").strip()), "message": str(exc or "").strip(), "notebooks": []})
+                        set_notebooklm_choices([])
+                        update_notebooklm_status_label()
+                        showWarning(f"NotebookLM list refresh failed: {str(exc)}")
+
+                notebooklm_session_button.clicked.connect(refresh_notebooklm_session_action)
+                notebooklm_auth_button.clicked.connect(reauth_notebooklm_session_action)
+                notebooklm_list_button.clicked.connect(refresh_notebooklm_list_action)
+                set_notebooklm_choices()
+                update_notebooklm_status_label()
+
             tab_layout.addStretch(1)
 
             def refresh_model_choices():
@@ -4277,14 +4738,22 @@ def setup_config_menu():
                 set_combo_values(model_combo, get_provider_model_choices(provider_key), next_text)
 
             controlled_widgets = [provider_combo, model_combo, prompt_combo, tokens_spin, temp_spin]
+            if notebooklm_checkbox is not None:
+                controlled_widgets.append(notebooklm_checkbox)
 
             def update_mode_enabled_state():
                 enabled = enabled_checkbox.isChecked()
                 for widget in controlled_widgets:
                     widget.setEnabled(enabled)
+                if notebooklm_checkbox is not None:
+                    notebooklm_enabled = enabled and notebooklm_checkbox.isChecked()
+                    for widget in notebooklm_controlled_widgets:
+                        widget.setEnabled(notebooklm_enabled)
 
             provider_combo.currentIndexChanged.connect(refresh_model_choices)
             enabled_checkbox.toggled.connect(update_mode_enabled_state)
+            if notebooklm_checkbox is not None:
+                notebooklm_checkbox.toggled.connect(update_mode_enabled_state)
             refresh_model_choices()
             update_mode_enabled_state()
 
@@ -4297,6 +4766,11 @@ def setup_config_menu():
                 "temperature": temp_spin,
                 "refresh_models": refresh_model_choices,
             }
+            if mode_key == "deep":
+                mode_widgets[mode_key].update({
+                    "use_notebooklm": notebooklm_checkbox,
+                    "notebook_id": notebooklm_combo,
+                })
             tabs.addTab(tab, title)
 
         create_mode_tab("standard", "Standard", "Use Standard Analysis", standard_mode)
@@ -4502,6 +4976,9 @@ def setup_config_menu():
                         "prompt_profile": get_selected_deep_prompt_profile(),
                         "max_tokens": mode_widgets["deep"]["max_tokens"].value(),
                         "temperature": mode_widgets["deep"]["temperature"].value() / 100.0,
+                        "use_notebooklm": bool(mode_widgets["deep"].get("use_notebooklm") and mode_widgets["deep"]["use_notebooklm"].isChecked()),
+                        "notebook_id": str(mode_widgets["deep"]["notebook_id"].currentData() or "").strip() if bool(mode_widgets["deep"].get("use_notebooklm") and mode_widgets["deep"]["use_notebooklm"].isChecked()) else "",
+                        "notebook_title": str(mode_widgets["deep"]["notebook_id"].currentText() or "").strip() if bool(mode_widgets["deep"].get("use_notebooklm") and mode_widgets["deep"]["use_notebooklm"].isChecked()) else "",
                     },
                 },
                 "providers": providers_block,
