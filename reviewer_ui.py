@@ -2091,7 +2091,7 @@ def extract_cloze_targets_from_front(front_text: str) -> list[str]:
     return _ordered_unique(flattened_targets)
 
 def _normalize_answer_match_key(value: str) -> str:
-    return _normalize_expected_compare_text(value).casefold()
+    return _normalize_full_answer_text(value).casefold()
 
 def _normalize_answer_segment(value: str) -> str:
     return _normalize_full_answer_text(value)
@@ -2099,8 +2099,14 @@ def _normalize_answer_segment(value: str) -> str:
 def _normalize_full_answer_text(value: str) -> str:
     return re.sub(r"\s+", " ", extract_code_text(value or "")).strip()
 
+def _normalize_display_answer_text(value: str) -> str:
+    return extract_code_text(value or "").strip()
+
 def _join_answer_segments(segments: list[str]) -> str:
     return " ".join(segment.strip() for segment in segments if isinstance(segment, str) and segment.strip()).strip()
+
+def _join_answer_segments_for_display(segments: list[str]) -> str:
+    return "\n".join(segment.strip() for segment in segments if isinstance(segment, str) and segment.strip()).strip()
 
 def get_active_cloze_index(card) -> int | None:
     card_ord = getattr(card, "ord", None) if card else None
@@ -2163,6 +2169,7 @@ def build_answer_contract(card) -> dict:
             "active_cloze_index": None,
             "canonical_segments": [canonical_answer] if canonical_answer else [],
             "canonical_joined_answer": canonical_answer,
+            "canonical_display_answer": canonical_answer,
             "accepted_joined_answers": accepted_answers,
             "front_text_raw": front_text_raw,
             "cloze_targets": [],
@@ -2213,6 +2220,7 @@ def build_answer_contract(card) -> dict:
             "active_cloze_index": active_cloze_index,
             "canonical_segments": [resolved_canonical] if resolved_canonical else [],
             "canonical_joined_answer": resolved_canonical,
+            "canonical_display_answer": resolved_canonical,
             "accepted_joined_answers": accepted_answers,
             "front_text_raw": front_text_raw,
             "cloze_targets": active_targets,
@@ -2222,16 +2230,20 @@ def build_answer_contract(card) -> dict:
 
     canonical_segments = [_normalize_answer_segment(target) for target in active_targets if _normalize_answer_segment(target)]
     canonical_joined_answer = _join_answer_segments(canonical_segments)
+    derived_display_answer = _join_answer_segments_for_display(active_targets)
     normalized_canonical = _normalize_full_answer_text(canonical_joined_answer)
     normalized_back = _normalize_full_answer_text(canonical_answer)
+    canonical_display_answer = canonical_answer if canonical_answer and normalized_back == normalized_canonical else derived_display_answer
     is_valid = True
     invalid_reason = ""
     if normalized_back and normalized_back != normalized_canonical:
         is_valid = False
         invalid_reason = f"Invalid multi-cloze Back for c{active_cloze_index} does not match derived full answer."
-    accepted_values = [canonical_joined_answer] if canonical_joined_answer else []
+    accepted_values = []
     if canonical_answer and normalized_back == normalized_canonical:
-        accepted_values.insert(0, canonical_answer)
+        accepted_values.append(canonical_answer)
+    elif canonical_joined_answer:
+        accepted_values.append(canonical_joined_answer)
     accepted_values.extend(answer_variants)
     accepted_answers = _ordered_unique(accepted_values)
     return {
@@ -2240,6 +2252,7 @@ def build_answer_contract(card) -> dict:
         "active_cloze_index": active_cloze_index,
         "canonical_segments": canonical_segments,
         "canonical_joined_answer": canonical_joined_answer,
+        "canonical_display_answer": canonical_display_answer,
         "accepted_joined_answers": accepted_answers,
         "front_text_raw": front_text_raw,
         "cloze_targets": canonical_segments,
@@ -2269,19 +2282,20 @@ def _contains_variant_media_marker(value: str) -> bool:
 
 def build_visible_expected_alternatives(raw_answers: list[str], primary_expected: str) -> list[str]:
     visible_answers = []
-    seen = {primary_expected} if primary_expected else set()
+    seen = {_normalize_answer_match_key(primary_expected)} if primary_expected else set()
     for raw_answer in raw_answers or []:
         if not isinstance(raw_answer, str) or _contains_variant_media_marker(raw_answer):
             continue
         normalized = _normalize_expected_compare_text(raw_answer)
-        if not normalized or normalized in seen:
+        match_key = _normalize_answer_match_key(raw_answer)
+        if not normalized or not match_key or match_key in seen:
             continue
-        seen.add(normalized)
+        seen.add(match_key)
         visible_answers.append(normalized)
     return visible_answers
 
 def build_expected_display_model(card, expected_text: str) -> dict:
-    primary_expected = _normalize_expected_compare_text(expected_text)
+    primary_expected = _normalize_display_answer_text(expected_text)
     if not card:
         return {
             "primary_expected": primary_expected,
@@ -2289,7 +2303,7 @@ def build_expected_display_model(card, expected_text: str) -> dict:
         }
 
     contract = build_answer_contract(card)
-    primary_expected = _normalize_expected_compare_text(contract["canonical_joined_answer"] or expected_text)
+    primary_expected = _normalize_display_answer_text(contract.get("canonical_display_answer") or expected_text)
 
     return {
         "primary_expected": primary_expected,

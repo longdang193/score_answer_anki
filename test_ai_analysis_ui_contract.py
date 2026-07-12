@@ -1335,6 +1335,7 @@ def main():
     multiline_front = "|(c1::Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.|)\n|(c1::Wann hast du Zeit?|)"
     template_score_contains_card.note()["Front"] = multiline_front
     template_score_contains_card.note()["Back"] = "Wann hast du Zeit?"
+    template_score_contains_card.note()["Back_variants"] = ""
     multiline_targets = addon.extract_cloze_targets_from_front(multiline_front)
     assert multiline_targets == [
         "Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.",
@@ -1351,22 +1352,37 @@ def main():
     assert multiline_contract["mode"] == "multi_segment"
     assert multiline_contract["is_valid"] is False
     assert multiline_contract["canonical_joined_answer"] == "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?"
+    assert multiline_contract["canonical_display_answer"] == "Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.\nWann hast du Zeit?"
 
-    template_score_contains_card.note()["Back"] = multiline_contract["canonical_joined_answer"]
-    template_score_contains_card.note()["Back_variants"] = "Unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann passt es dir?"
+    multiline_display_model = addon.build_expected_display_model(template_score_contains_card, multiline_contract["canonical_joined_answer"])
+    assert multiline_display_model == {
+        "primary_expected": "Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.\nWann hast du Zeit?",
+        "alternative_expected_answers": [],
+    }
+
+    template_score_contains_card.note()["Back"] = "Also unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann hast du Zeit?"
+    template_score_contains_card.note()["Back_variants"] = "Unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann passt es dir?"
     multiline_valid_contract = addon.build_answer_contract(template_score_contains_card)
     assert multiline_valid_contract["mode"] == "multi_segment"
     assert multiline_valid_contract["is_valid"] is True
+    assert multiline_valid_contract["canonical_display_answer"] == "Also unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann hast du Zeit?"
     assert multiline_valid_contract["accepted_joined_answers"] == [
-        "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?",
-        "Unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann passt es dir?",
+        "Also unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann hast du Zeit?",
+        "Unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann passt es dir?",
     ]
     multiline_canonical, multiline_answers = addon.build_accepted_answer_pool(template_score_contains_card)
     assert multiline_canonical == "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?"
     assert multiline_answers == [
-        "Also unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann hast du Zeit?",
-        "Unser Deutschkurskollege liegt im Krankenhaus. Wir sollten ihn diese Woche besuchen. Wann passt es dir?",
+        "Also unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann hast du Zeit?",
+        "Unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann passt es dir?",
     ]
+    multiline_valid_display_model = addon.build_expected_display_model(template_score_contains_card, multiline_canonical)
+    assert multiline_valid_display_model == {
+        "primary_expected": "Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.\nWann hast du Zeit?",
+        "alternative_expected_answers": [
+            "Unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.\nWann passt es dir?",
+        ],
+    }
     template_score_contains_card.note()["Back"] = "Wann hast du Zeit?"
     template_score_contains_card.note()["Back_variants"] = ""
 
