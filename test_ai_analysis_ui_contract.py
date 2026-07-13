@@ -53,8 +53,14 @@ class DummyNote(dict):
             "Back4": "",
             "Back4_variants": "",
             "Hint4": "Fourth hint",
+            "Back5": "",
+            "Back5_variants": "",
+            "Hint5": "Fifth hint",
+            "Back6": "",
+            "Back6_variants": "",
+            "Hint6": "Sixth hint",
         })
-        self._model = {"name": model_name, "tmpls": [{"name": template_name} for _ in range(4)]}
+        self._model = {"name": model_name, "tmpls": [{"name": template_name} for _ in range(6)]}
 
     def model(self):
         return self._model
@@ -1251,10 +1257,22 @@ def main():
         "answer_variants_field": "Back4_variants",
         "hint_field": "Hint4",
     }
+    assert addon.resolve_slot_field_names(5) == {
+        "answer_field": "Back5",
+        "answer_variants_field": "Back5_variants",
+        "hint_field": "Hint5",
+    }
+    assert addon.resolve_slot_field_names(6) == {
+        "answer_field": "Back6",
+        "answer_variants_field": "Back6_variants",
+        "hint_field": "Hint6",
+    }
     assert addon.resolve_answer_field_names(1) == ("Back", "Back_variants")
     assert addon.resolve_answer_field_names(2) == ("Back2", "Back2_variants")
     assert addon.resolve_answer_field_names(3) == ("Back3", "Back3_variants")
     assert addon.resolve_answer_field_names(4) == ("Back4", "Back4_variants")
+    assert addon.resolve_answer_field_names(5) == ("Back5", "Back5_variants")
+    assert addon.resolve_answer_field_names(6) == ("Back6", "Back6_variants")
     assert addon.get_active_cloze_index(template_score_contains_card) == 1
     assert addon.get_manual_hint_html(template_score_contains_card) == "Base hint"
 
@@ -1300,6 +1318,10 @@ def main():
     template_score_contains_card.note()["Back3_variants"] = ""
     template_score_contains_card.note()["Back4"] = "fox"
     template_score_contains_card.note()["Back4_variants"] = ""
+    template_score_contains_card.note()["Back5"] = "wolf"
+    template_score_contains_card.note()["Back5_variants"] = ""
+    template_score_contains_card.note()["Back6"] = "bear"
+    template_score_contains_card.note()["Back6_variants"] = ""
     template_score_contains_card.ord = 2
     assert addon.get_manual_hint_html(template_score_contains_card) == "Third hint"
     template_score_contains_card.ord = 3
@@ -1310,6 +1332,21 @@ def main():
     assert sparse_contract["active_cloze_index"] == 4
     assert sparse_contract["is_valid"] is False
     assert "c4" in sparse_contract["invalid_reason"]
+
+    template_score_contains_card.note()["Front"] = "This is a |(c1::cat|) and a |(c2::dog|) and a |(c3::owl|) and a |(c4::fox|) and a |(c5::wolf|) and a |(c6::bear|)."
+    template_score_contains_card.ord = 4
+    assert addon.get_manual_hint_html(template_score_contains_card) == "Fifth hint"
+    c5_contract = addon.build_answer_contract(template_score_contains_card)
+    assert c5_contract["is_valid"] is True
+    assert c5_contract["active_cloze_index"] == 5
+    assert c5_contract["canonical_joined_answer"] == "wolf"
+
+    template_score_contains_card.ord = 5
+    assert addon.get_manual_hint_html(template_score_contains_card) == "Sixth hint"
+    c6_contract = addon.build_answer_contract(template_score_contains_card)
+    assert c6_contract["is_valid"] is True
+    assert c6_contract["active_cloze_index"] == 6
+    assert c6_contract["canonical_joined_answer"] == "bear"
 
     template_score_contains_card.ord = 1
     del template_score_contains_card.note()["Back2"]

@@ -285,7 +285,7 @@ When reporting bugs, include:
 - Owned by `score_answer_anki`, not by note-template-local hint buttons
 - Runs on front side only for eligible typed `_score` cards
 - Optional mapped manual-hint note field is shown as stored field content
-- Active-slot mapping is: `c1 -> Hint`, `c2 -> Hint2`, `c3 -> Hint3`, `c4 -> Hint4`; non-cloze score cards use `Hint`
+- Active-slot mapping is: `c1 -> Hint`, `c2 -> Hint2`, `c3 -> Hint3`, `c4 -> Hint4`, `c5 -> Hint5`, `c6 -> Hint6`; non-cloze score cards use `Hint`
 - Missing mapped hint field behaves as empty manual hint
 - `Suggest Hint` uses configured provider and prompt profile, but generated hint is session-only text and is not auto-saved
 - AI hint and AI analysis share same bounded rich-format renderer

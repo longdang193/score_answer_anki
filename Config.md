@@ -317,7 +317,7 @@ For issues specific to this add-on, check:
 - Surface: front side only
 - Gate: `_score` template plus supported typed-answer front-side path
 - Manual mapped hint field passes through stored field content
-- Active-slot mapping is: `c1 -> Hint`, `c2 -> Hint2`, `c3 -> Hint3`, `c4 -> Hint4`; non-cloze score cards use `Hint`
+- Active-slot mapping is: `c1 -> Hint`, `c2 -> Hint2`, `c3 -> Hint3`, `c4 -> Hint4`, `c5 -> Hint5`, `c6 -> Hint6`; non-cloze score cards use `Hint`
 - Missing mapped hint field behaves as empty manual hint
 - AI hint and AI analysis use same bounded rich-format renderer
 - Supported AI formatting: paragraphs, `**bold**`, `*italic*`, inline code, fenced code blocks, ordered/unordered lists, canonical `\(...\)` and `\[...\]` math delimiters
