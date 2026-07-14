@@ -1582,6 +1582,11 @@ def main():
     assert unavailable_hint["status"] == "unavailable"
     assert unavailable_hint["hint_text"] == ""
     assert unavailable_hint["error_text"]
+    assert addon.normalize_hint_result('{"hint":"Focus on conditions, not only the position."}') == {
+        "status": "ready",
+        "hint_text": "Focus on conditions, not only the position.",
+        "error_text": "",
+    }
 
     assert addon.render_front_hint_panel in sys.modules["aqt"].gui_hooks.card_will_show
 
@@ -1604,6 +1609,7 @@ def main():
     assert ready_hint["status"] == "ready"
     assert ready_hint["hint_text"] == "Start from 13 × 10, not <221>."
     assert len(api_calls) == 1
+    assert 'Return exactly one JSON object with key "hint"' in api_calls[0]["messages"][1]["content"]
     assert addon.current_hint_context["question_text"] == "13 * 17 = ?"
     assert addon.front_hint_panel_state["is_open"] is True
     assert mw.reviewer.web.commands

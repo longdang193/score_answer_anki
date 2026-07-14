@@ -1480,7 +1480,7 @@ def make_hint_unavailable(reason: str, language: str = "english") -> dict:
 def normalize_hint_result(result, language: str = "english") -> dict:
     if isinstance(result, dict):
         status = result.get("status") or "ready"
-        hint_text = (result.get("hint_text", "") or "").strip()
+        hint_text = (result.get("hint_text") or result.get("hint") or "").strip()
         error_text = (result.get("error_text", "") or "").strip()
         if status == "loading":
             return {"status": "loading", "hint_text": "", "error_text": ""}
@@ -1494,6 +1494,12 @@ def normalize_hint_result(result, language: str = "english") -> dict:
         hint_text = hint_text.strip("`").strip()
         if hint_text.lower().startswith("json"):
             hint_text = hint_text[4:].strip()
+    try:
+        parsed_hint = json.loads(hint_text)
+    except (TypeError, ValueError):
+        parsed_hint = None
+    if isinstance(parsed_hint, dict):
+        return normalize_hint_result(parsed_hint, language)
     if not hint_text:
         return make_hint_unavailable("Empty AI response", language)
     return {"status": "ready", "hint_text": hint_text, "error_text": ""}
@@ -1511,7 +1517,7 @@ def build_hint_prompt(context_data: dict, config=None) -> tuple[str, str]:
         "",
         clean_html_content(context_data.get("manual_hint", "")),
     )
-    prompt += f"\n\nReturn only one concise hint in {get_language_name(language)}. Do not reveal the full answer."
+    prompt += f'\n\nReturn exactly one JSON object with key "hint" containing one concise hint in {get_language_name(language)}. No markdown, no code fences, no extra text. Do not reveal the full answer.'
     return resolved["system_prompt"], prompt
 
 def escape_ai_source_text(text) -> str:
