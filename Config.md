@@ -54,6 +54,7 @@ Phase 1 uses four top-level tabs:
   - Show code compare
   - Shared custom prompt fields
 - **Rule**: This tab does not own provider credentials or mode-specific model choices
+- **Compare rendering**: expected answers preserve safe inline formatting, paragraph/list/highlight structure, and Anki MathJax formulas; native typed comparison receives a post-render MathJax pass
 
 #### Standard
 - **Purpose**: Own automatic standard-analysis runtime
@@ -64,7 +65,7 @@ Phase 1 uses four top-level tabs:
   - prompt profile
   - max tokens
   - temperature
-- **Rule**: standard analysis runs automatically only when this mode stays enabled
+- **Rule**: standard analysis runs automatically only when this mode stays enabled; disabling it removes only the `AI Analysis` block and keeps answer comparison styling
 
 #### Deep
 - **Purpose**: Own manual deep-analysis runtime
@@ -79,7 +80,7 @@ Phase 1 uses four top-level tabs:
   - `Refresh NotebookLM Session`
   - `Refresh Notebook List`
   - `Target Notebook`
-- **Rule**: deep settings gray out when deep mode is off; NotebookLM subcontrols gray out when `Use NotebookLM MCP` is off; review panel shows `Deep Analysis` only when deep mode is enabled and model is non-blank
+- **Rule**: `Use Deep Analysis` and its settings gray out with `Standard Mode is required.` when Standard mode is off; NotebookLM subcontrols gray out when `Use NotebookLM MCP` is off; review panel shows `Deep Analysis` only when both modes are enabled and the deep model is non-blank
 
 #### Providers
 - **Purpose**: Own provider credentials and provider-level saved extras

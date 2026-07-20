@@ -593,6 +593,8 @@ def main():
     assert "Providers" in source
     assert "Use Deep Analysis" in source
     assert "Use Standard Analysis" in source
+    assert "Standard Mode is required." in source
+    assert 'mode_widgets["standard"]["enabled"].toggled.connect(mode_widgets["deep"]["update_enabled_state"])' in source
     assert "class TemperatureSpinBox(QSpinBox):" in source
     assert "temp_spin = TemperatureSpinBox()" in source
     assert "temp_spin = QDoubleSpinBox()" not in source
@@ -622,6 +624,194 @@ def main():
     save_block = source.split("def save_and_close():", 1)[1].split("save_button.clicked.connect(save_and_close)", 1)[0]
     assert "refresh_open_review_surfaces_after_config_save()" in save_block
     assert "dialog.resize(760, 900)" not in read_addon_source()
+    assert ".aqi-shell {\n  max-width: none;\n}" in source
+    assert ".aqi-front-hint-wrap {\n  max-width: 800px;\n}" in source
+
+    highlighted_compare = addon._code_compare_block(
+        "No, it only proves that the current solution is optimal for the <mark>full LP relaxation</mark>.",
+        "",
+        "",
+        {"expected": "Expected", "provided": "Your answer"},
+    )
+    assert "<mark>full LP relaxation</mark>" in highlighted_compare
+
+    rich_expected_compare = addon._code_compare_block(
+        r"<p>Typically</p><ul><li>a time limit (<anki-mathjax>t &gt; t_{\max}</anki-mathjax>) or</li><li>a maximum number of iterations.</li></ul>",
+        "",
+        "",
+        {"expected": "Expected", "provided": "Your answer"},
+    )
+    assert "<ul>" in rich_expected_compare
+    assert "<li>a time limit" in rich_expected_compare
+    assert "<li>a maximum number of iterations.</li>" in rich_expected_compare
+    assert r"\(t &gt; t_{\max}\)" in rich_expected_compare
+
+    colored_expected = (
+        'It controls the VND neighborhoods.<br>'
+        '<span style="color:rgb(255, 69, 0)">intensification</span>.'
+    )
+    colored_expected_html = addon._render_expected_answer_html(colored_expected)
+    assert '<br><span style="color:rgb(255, 69, 0)">intensification</span>.' in colored_expected_html
+    colored_compare = addon._code_compare_block(
+        colored_expected,
+        "",
+        "",
+        {"expected": "Expected", "provided": "Your answer"},
+    )
+    colored_native = addon._render_native_typed_diff(
+        "<code id=typeans>plain text</code>",
+        colored_expected,
+        "",
+    )
+    assert colored_expected_html in colored_compare
+    assert colored_expected_html in colored_native
+    assert 'class="mathjax_process aqi-expected-rich"' in colored_native
+
+    bold_expected = (
+        'It is <strong>chosen randomly</strong>, <b>increased gradually</b>, '
+        '<u>underlined</u>, <em>emphasized</em>, <s>struck</s>, H<sub>2</sub>O, and x<sup>2</sup>.'
+    )
+    bold_expected_html = addon._render_expected_answer_html(bold_expected)
+    assert "<strong>chosen randomly</strong>" in bold_expected_html
+    assert "<b>increased gradually</b>" in bold_expected_html
+    assert "<u>underlined</u>" in bold_expected_html
+    assert "<em>emphasized</em>" in bold_expected_html
+    assert "<s>struck</s>" in bold_expected_html
+    assert "H<sub>2</sub>O" in bold_expected_html
+    assert "x<sup>2</sup>" in bold_expected_html
+    assert addon._render_expected_answer_html(
+        '<strong onclick="alert(1)" style="color:red">safe</strong>'
+    ) == "<strong>safe</strong>"
+    assert bold_expected_html in addon._code_compare_block(
+        bold_expected,
+        "",
+        "",
+        {"expected": "Expected", "provided": "Your answer"},
+    )
+    assert bold_expected_html in addon._render_native_typed_diff(
+        "<code id=typeans>plain text</code>",
+        bold_expected,
+        "",
+    )
+
+    multiline_expected_html = addon._render_expected_answer_html("first line\nsecond line")
+    assert multiline_expected_html == "first line<br>second line"
+    multiline_native = addon._render_native_typed_diff(
+        "<code id=typeans>plain text</code>",
+        "first line\nsecond line",
+        "",
+    )
+    assert multiline_expected_html in multiline_native
+
+    hostile_color_html = addon._render_expected_answer_html(
+        '<span onclick="alert(1)" style="color:red;background:url(javascript:alert(1))">Safe</span>'
+    )
+    assert hostile_color_html == '<span style="color:red">Safe</span>'
+    assert "onclick" not in hostile_color_html
+    assert "background" not in hostile_color_html
+    assert "javascript" not in hostile_color_html
+
+    native_mismatch = addon._render_native_typed_diff(
+        '<code id=typeans><span class=typeBad>x</span><br><span id=typearrow>&darr;</span><br><span class=typeMissed>old</span></code>',
+        colored_expected,
+        "x",
+    )
+    assert '<span class=typeBad>x</span>' in native_mismatch
+    assert '<span class=typeMissed>old</span>' not in native_mismatch
+    assert colored_expected_html in native_mismatch
+
+    rich_alternatives = addon.build_visible_expected_alternatives(
+        [colored_expected],
+        "different answer",
+    )
+    assert rich_alternatives == [colored_expected]
+    rich_alternative_chips = addon._build_expected_variant_chip_list(rich_alternatives)
+    assert colored_expected_html in rich_alternative_chips
+    assert 'class="aqi-choice-chip sqv-choice-chip aqi-expected-rich"' in rich_alternative_chips
+
+    formatted_expected_compare = addon._code_compare_block(
+        """<p>Typically</p>
+<ul>
+<li>first</li>
+<li>second</li>
+</ul>""",
+        "",
+        "",
+        {"expected": "Expected", "provided": "Your answer"},
+    )
+    assert "</p><ul>" in formatted_expected_compare
+    assert "</li><li>" in formatted_expected_compare
+
+    adjacent_marks_compare = addon._code_compare_block(
+        "<mark>full</mark> <mark>LP relaxation</mark>",
+        "",
+        "",
+        {"expected": "Expected", "provided": "Your answer"},
+    )
+    assert "</mark> <mark>" in adjacent_marks_compare
+
+    hostile_expected_compare = addon._code_compare_block(
+        '<ul onclick="alert(1)"><li>Safe<script>alert(1)</script></li></ul>',
+        "",
+        "",
+        {"expected": "Expected", "provided": "Your answer"},
+    )
+    assert "onclick" not in hostile_expected_compare
+    assert "<script>" not in hostile_expected_compare
+
+    mixed_content = """<code>reset</code> initializes the environment:<p></p>
+<pre><code class="hljs python language-python">{
+    <span class="hljs-string">"Cur_DP"</span>: <span class="hljs-number">1</span>
+    literal = &amp;lt;
+}</code></pre>
+<p>The first decision point is <code>1</code>.</p>"""
+    mixed_content_html = addon._render_expected_answer_html(mixed_content)
+    assert '<span class="aqi-expected-inline-code">reset</span> initializes the environment:' in mixed_content_html
+    assert '<span class="aqi-expected-code hljs language-python">' in mixed_content_html
+    assert '<span class="hljs-string">&quot;Cur_DP&quot;</span>' in mixed_content_html
+    assert "literal = &amp;lt;" in mixed_content_html
+    assert '<p>The first decision point is <span class="aqi-expected-inline-code">1</span>.</p>' in mixed_content_html
+    assert "<p></p>" not in mixed_content_html
+    assert "dictionary:<br><br>" not in mixed_content_html
+    assert "</span><br><br><p>" not in mixed_content_html
+    assert ".aqi-expected-code {" in source
+    assert "font-family: ui-monospace" in source
+
+    original_config = addon.get_config()
+    addon.save_config(
+        {
+            "enabled": False,
+            "language": "english",
+            "show_anki_compare": True,
+            "show_code_compare": True,
+        }
+    )
+    original_back = mw.reviewer.card.note()["Back"]
+    mw.reviewer.card.note()["Back"] = "<mark>221</mark>"
+    disabled_ai_rendered = addon.render_enhanced_comparison(
+        "<div>anki compare</div>",
+        "<mark>221</mark>",
+        "17",
+        "[[type:Back]]",
+    )
+    mw.reviewer.card.note()["Back"] = original_back
+    assert 'class="aqi-shell"' in disabled_ai_rendered
+    assert "aqi-compare" in disabled_ai_rendered
+    assert "<mark>221</mark>" in disabled_ai_rendered
+    assert "aqi-analysis-panel-wrap" not in disabled_ai_rendered
+    assert "typesetPromise" in disabled_ai_rendered
+
+    deep_without_standard = addon.resolve_ai_runtime_config(
+        {
+            "modes": {
+                "standard": {"enabled": False},
+                "deep": {"enabled": True, "model": "gpt-5.4"},
+            }
+        },
+        analysis_mode="deep",
+    )
+    assert deep_without_standard["availability_reason"] == "Standard Mode is required"
+    addon.save_config(original_config)
 
     mismatch = addon.make_variant_mismatch_result("Variant mismatch", "english")
     assert mismatch["status"] == "variant_mismatch"
@@ -630,6 +820,13 @@ def main():
     cache_key = build_current_analysis_cache_key(addon, mw.reviewer.card, "2")
     addon.analysis_results[cache_key] = {"scored": True, "score": 0, "tips": "Wrong."}
     rendered = addon.render_enhanced_comparison("<div>anki compare</div>", "221", "2", "[[type:Back]]")
+    native_math_rendered = addon.render_enhanced_comparison(
+        r"<code id=typeans>\(\lambda_i^*=0\)</code>",
+        "221",
+        "2",
+        "[[type:Back]]",
+    )
+    assert '<code id=typeans class="mathjax_process aqi-expected-rich">' in native_math_rendered
     assert "Question Context" not in rendered
     assert addon.get_ui_texts("english")["review_suggestion"] in rendered
     assert "Regenerate Analysis" not in rendered
@@ -1415,9 +1612,9 @@ def main():
     ]
     multiline_valid_display_model = addon.build_expected_display_model(template_score_contains_card, multiline_canonical)
     assert multiline_valid_display_model == {
-        "primary_expected": "Also unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.\nWann hast du Zeit?",
+        "primary_expected": "Also unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann hast du Zeit?",
         "alternative_expected_answers": [
-            "Unser Deutschkurskollege liegt im Krankenhaus.\nWir sollten ihn diese Woche besuchen.\nWann passt es dir?",
+            "Unser Deutschkurskollege liegt im Krankenhaus.<br>Wir sollten ihn diese Woche besuchen.<br>Wann passt es dir?",
         ],
     }
     template_score_contains_card.note()["Back"] = "Wann hast du Zeit?"

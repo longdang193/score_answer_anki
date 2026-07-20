@@ -139,7 +139,7 @@ Phase 1 uses four top-level tabs:
 
 - **Analysis language**: language for AI feedback (`tips`) and prompt intent
 - **Show Anki compare**: toggle native Anki comparison block
-- **Show code compare**: toggle side-by-side extracted text comparison
+- **Show code compare**: toggle side-by-side expected-answer comparison; preserves safe inline formatting, paragraphs, lists, `<mark>...</mark>` highlights, and Anki MathJax formulas
 - **Custom system prompt**: shared global field, shown when standard or deep profile is `custom`
 - **Custom analysis prompt template**: shared global field, shown when standard or deep profile is `custom`; supports:
   - `{question}`
@@ -156,8 +156,8 @@ Phase 1 uses four top-level tabs:
 
 ### Standard / Deep Tabs
 
-- **Use Standard Analysis**: gates automatic standard analysis on `_score` answer reveal
-- **Use Deep Analysis**: gates manual `Deep Analysis` action in review panel
+- **Use Standard Analysis**: gates automatic standard analysis on `_score` answer reveal; disabling it removes only the `AI Analysis` panel
+- **Use Deep Analysis**: gates manual `Deep Analysis` action in review panel; requires Standard mode
 - **Provider**: mode-owned provider choice
 - **Model**: mode-owned model ID; editable, no silent deep fallback
 - **Prompt profile**: supports `default`, `strict_stem`, `speaking_flexible`, `cloze_recall`, and `custom`

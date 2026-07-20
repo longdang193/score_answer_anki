@@ -229,6 +229,8 @@ def main():
     plain_rendered = addon._to_textarea_on_question('<div>plain</div>', card, "Answer")
     assert 'aqi-type-input-wrap' not in plain_rendered
     assert 'aqi-insert-tab-btn' not in plain_rendered
+    assert 'window.__aqiClearTypedAnswerFooter' in plain_rendered
+    assert "document.getElementById('aqi-review-footer')" in plain_rendered
 
     question_caps = addon.get_card_capabilities(card, card.question(), "Question")
     assert question_caps["scoreable"] is True
@@ -321,7 +323,7 @@ def main():
     rich_display_model = addon.build_expected_display_model(rich_variant_card, "My name is Long")
     assert rich_display_model == {
         "primary_expected": "My name is Long",
-        "alternative_expected_answers": ["Long"],
+        "alternative_expected_answers": ["<b>Long</b>"],
     }
 
     invalid_card = DummyCard(

@@ -71,39 +71,27 @@ QUESTION_VARIANT_MEDIA_MARKERS = (
 def extract_code_text(html_or_text: str) -> str:
     """
     Extract readable code from HTML or plaintext while preserving newlines/indentation.
-    - Prefers the content inside <pre> blocks if present (common in highlighter output).
+    - Preserves text surrounding <pre> blocks.
     - Strips tags/spans/line-numbering, unescapes entities.
-    - Falls back to a generic HTML strip that keeps line breaks.
+    - Keeps block-level line breaks.
     """
     if not html_or_text:
         return ""
     s = html_or_text.replace('\r\n', '\n').replace('\r', '\n')
 
-    # Prefer <pre> blocks (e.g., hilite.me wraps code in <pre> inside a table) [hilite.me](http://hilite.me/)
-    pre_blocks = re.findall(r'<pre[^>]*>(.*?)</pre>', s, flags=re.IGNORECASE | re.DOTALL)
-    if pre_blocks:
-        parts = []
-        for block in pre_blocks:
-            block = re.sub(r'<br\s*/?>', '\n', block, flags=re.IGNORECASE)
-            block = re.sub(r'<[^>]+>', '', block)  # strip spans/etc. inside pre
-            block = html.unescape(block)
-            block = '\n'.join(ln.rstrip() for ln in block.split('\n'))
-            parts.append(block.strip('\n'))
-        text = '\n\n'.join(parts)
+    def clean_pre_block(match) -> str:
+        block = re.sub(r'<br\s*/?>', '\n', match.group(1), flags=re.IGNORECASE)
+        block = re.sub(r'<[^>]+>', '', block)
+        lines = [line.rstrip() for line in block.split('\n')]
+        if sum(1 for line in lines if re.match(r'^\s*\d+\b', line)) >= max(3, len(lines) // 2):
+            lines = [re.sub(r'^\s*\d+\b\s*', '', line) for line in lines]
+        return '\n' + '\n'.join(lines).strip('\n') + '\n'
 
-        # Optional: drop leading line numbers if most lines start with digits
-        lines = text.split('\n')
-        if lines and sum(1 for ln in lines if re.match(r'^\s*\d+\b', ln)) >= max(3, len(lines)//2):
-            lines = [re.sub(r'^\s*\d+\b\s*', '', ln) for ln in lines]
-            text = '\n'.join(lines)
-    else:
-        # Generic HTML → text with preserved line breaks
-        s = re.sub(r'<script.*?</script>', '', s, flags=re.IGNORECASE | re.DOTALL)
-        s = re.sub(r'<style.*?</style>', '', s, flags=re.IGNORECASE | re.DOTALL)
-        # Block-level to newline
-        s = re.sub(r'</?(p|div|br|li|tr|td|th|blockquote|h[1-6]|ul|ol|pre|table)[^>]*>', '\n', s, flags=re.IGNORECASE)
-        s = re.sub(r'<[^>]+>', '', s)  # remove remaining tags
-        text = html.unescape(s)
+    s = re.sub(r'<pre[^>]*>(.*?)</pre>', clean_pre_block, s, flags=re.IGNORECASE | re.DOTALL)
+    s = re.sub(r'<script.*?</script>', '', s, flags=re.IGNORECASE | re.DOTALL)
+    s = re.sub(r'<style.*?</style>', '', s, flags=re.IGNORECASE | re.DOTALL)
+    s = re.sub(r'</?(p|div|br|li|tr|td|th|blockquote|h[1-6]|ul|ol|pre|table)[^>]*>', '\n', s, flags=re.IGNORECASE)
+    text = html.unescape(re.sub(r'<[^>]+>', '', s))
 
     # Normalize blank lines
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
@@ -111,6 +99,23 @@ def extract_code_text(html_or_text: str) -> str:
 
 def _to_textarea_on_question(text: str, card, kind: str) -> str:
     text = apply_question_variant_to_rendered_question(text, card, kind)
+
+    if kind and "Answer" in kind:
+        return text + """
+<script>
+(function(){
+  if(typeof window.__aqiClearTypedAnswerFooter==='function'){
+    window.__aqiClearTypedAnswerFooter();
+    return;
+  }
+  var footer=document.getElementById('aqi-review-footer');
+  if(footer&&footer.parentNode){ footer.parentNode.removeChild(footer); }
+  var root=document.scrollingElement||document.documentElement||document.body;
+  if(root&&root.classList){ root.classList.remove('aqi-review-footer-active'); }
+  try{ document.documentElement.style.setProperty('--aqi-review-footer-offset','0px'); }catch(_){ }
+})();
+</script>
+"""
 
     if not kind or "Question" not in kind:
         return text
@@ -166,6 +171,7 @@ function clearTypedAnswerFooter(){
   if(root&&root.classList){ root.classList.remove('aqi-review-footer-active'); }
   try{ document.documentElement.style.setProperty('--aqi-review-footer-offset','0px'); }catch(_){ }
 }
+window.__aqiClearTypedAnswerFooter=clearTypedAnswerFooter;
 function syncTypedAnswerFooterOffset(){
   var footer=getTypedAnswerFooter();
   var root=getReviewerScrollRoot();
@@ -362,6 +368,10 @@ def _code_friendly_diff_on_answer(text: str, card, kind: str) -> str:
 .typeGood, .typeBad, .typeMissed {
   white-space: pre-wrap !important;
 }
+mark {
+  background: #ffe58f !important;
+  color: inherit !important;
+}
 </style>
 """ + text
 
@@ -488,9 +498,16 @@ REVIEWER_SHARED_CSS = (
     + """.aqi-shell,
 .aqi-front-hint-wrap {
   font-family: var(--aqi-font-body) !important;
-  max-width: 800px;
   margin-left: auto;
   margin-right: auto;
+}
+
+.aqi-shell {
+  max-width: none;
+}
+
+.aqi-front-hint-wrap {
+  max-width: 800px;
 }
 
 /* Shared typography for addon-owned compare and panel surfaces */
@@ -729,6 +746,54 @@ textarea#typeans:focus,
   background: var(--ak-code-bg) !important;
   color: var(--ak-code-fg) !important;
   overflow: auto;
+}
+
+.aqi-expected-rich p {
+  margin: 0 0 8px;
+}
+
+.aqi-expected-rich > :first-child {
+  margin-top: 0;
+}
+
+.aqi-expected-rich > :last-child {
+  margin-bottom: 0;
+}
+
+.aqi-expected-code {
+  display: block;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.12);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+}
+
+.aqi-expected-code *,
+.aqi-expected-inline-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+}
+
+.aqi-expected-inline-code {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.aqi-expected-rich p,
+.aqi-expected-rich ul,
+.aqi-expected-rich ol,
+.aqi-expected-rich li {
+  white-space: normal;
+}
+
+.aqi-expected-rich ul,
+.aqi-expected-rich ol {
+  margin: 0;
+  padding-left: 1.4em;
 }
 
 .aqi-panel-card {
@@ -981,17 +1046,30 @@ def _build_variant_chip_list(variants: list[str]) -> str:
         return ""
     return f'<div class="aqi-choice-list sqv-choice-list">{chips}</div>'
 
+
+def _build_expected_variant_chip_list(variants: list[str]) -> str:
+    if not variants:
+        return ""
+    chips = "".join(
+        f'<div class="aqi-choice-chip sqv-choice-chip aqi-expected-rich">{_render_expected_answer_html(variant)}</div>'
+        for variant in variants
+        if variant
+    )
+    if not chips:
+        return ""
+    return f'<div class="aqi-choice-list sqv-choice-list">{chips}</div>'
+
 def _code_compare_block(expected: str, provided: str, lang_hint: str, labels: dict, expected_alternatives: list[str] | None = None) -> str:
-    exp_text = expected or ""
+    exp_html = _render_expected_answer_html(expected)
     prov_text = extract_code_text(provided)
     le = labels.get("expected", "Expected")
     lp = labels.get("provided", "Your answer")
-    expected_variant_list = _build_variant_chip_list(expected_alternatives or [])
+    expected_variant_list = _build_expected_variant_chip_list(expected_alternatives or [])
     return f"""
     <div class="aqi-compare ak-compare" style="display:flex; gap:12px; margin:12px 0;">
       <div style="flex:1; min-width:0;">
         <div class="aqi-compare-label ak-label">{html.escape(le)}</div>
-        <div class="aqi-compare-pre ak-pre">{html.escape(exp_text)}</div>
+        <div class="aqi-compare-pre ak-pre aqi-expected-rich">{exp_html}</div>
         {expected_variant_list}
       </div>
       <div style="flex:1; min-width:0;">
@@ -2105,8 +2183,154 @@ def _normalize_answer_segment(value: str) -> str:
 def _normalize_full_answer_text(value: str) -> str:
     return re.sub(r"\s+", " ", extract_code_text(value or "")).strip()
 
-def _normalize_display_answer_text(value: str) -> str:
-    return extract_code_text(value or "").strip()
+def _extract_safe_span_color(attrs: str) -> str:
+    style_match = re.search(r'\bstyle\s*=\s*(["\'])(.*?)\1', attrs or "", flags=re.IGNORECASE | re.DOTALL)
+    if not style_match:
+        return ""
+    color = ""
+    for declaration in style_match.group(2).split(";"):
+        name, separator, value = declaration.partition(":")
+        if separator and name.strip().casefold() == "color":
+            color = value.strip()
+    if re.fullmatch(r"(?i)(?:#[0-9a-f]{3,8}|[a-z]+|(?:rgb|rgba|hsl|hsla)\([0-9.,%+\-\s/]+\))", color):
+        return color
+    return ""
+
+
+def _extract_safe_highlight_classes(attrs: str) -> str:
+    class_match = re.search(r'\bclass\s*=\s*(["\'])(.*?)\1', attrs or "", flags=re.IGNORECASE | re.DOTALL)
+    if not class_match:
+        return ""
+    return " ".join(
+        token
+        for token in class_match.group(2).split()
+        if re.fullmatch(r"(?i)(?:hljs(?:-[a-z0-9_-]+)?|language-[a-z0-9_-]+)", token)
+    )
+
+
+def _render_expected_answer_html(value: str) -> str:
+    def replace_mathjax(match) -> str:
+        is_block = re.search(
+            r'\bblock\s*=\s*["\']?true',
+            match.group("attrs"),
+            flags=re.IGNORECASE,
+        )
+        opening, closing = (r"\[", r"\]") if is_block else (r"\(", r"\)")
+        return f"{opening}{match.group('body')}{closing}"
+
+    safe_tags: dict[str, str] = {}
+    safe_blocks: dict[str, str] = {}
+
+    def protect_tag(match) -> str:
+        closing = bool(match.group(1))
+        tag = match.group(2).lower()
+        marker = f"@@AQI_DISPLAY_TAG_{len(safe_tags)}@@"
+        if tag == "code":
+            safe_tag = "</span>" if closing else '<span class="aqi-expected-inline-code">'
+        elif tag == "br":
+            safe_tag = "<br>"
+        elif closing:
+            safe_tag = f"</{tag}>"
+        elif tag == "span":
+            color = _extract_safe_span_color(match.group("attrs"))
+            classes = _extract_safe_highlight_classes(match.group("attrs"))
+            safe_attrs = []
+            if classes:
+                safe_attrs.append(f'class="{html.escape(classes, quote=True)}"')
+            if color:
+                safe_attrs.append(f'style="color:{html.escape(color, quote=True)}"')
+            safe_tag = "<span" + (" " + " ".join(safe_attrs) if safe_attrs else "") + ">"
+        else:
+            safe_tag = f"<{tag}>"
+        safe_tags[marker] = safe_tag
+        return marker
+
+    def protect_pre_block(match) -> str:
+        body = match.group("body")
+        code_match = re.fullmatch(
+            r'\s*<code(?P<attrs>[^>]*)>(?P<body>.*?)</code>\s*',
+            body,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        code_attrs = code_match.group("attrs") if code_match else ""
+        body = code_match.group("body") if code_match else body
+        body = re.sub(
+            r"<\s*(/?)\s*(mark|strong|b|em|i|u|s|sub|sup|br|span)\b(?P<attrs>[^>]*)>",
+            protect_tag,
+            body,
+            flags=re.IGNORECASE,
+        )
+        safe_body = html.escape(html.unescape(re.sub(r"<[^>]+>", "", body).strip("\n")))
+        classes = _extract_safe_highlight_classes(code_attrs)
+        class_value = "aqi-expected-code" + (f" {classes}" if classes else "")
+        marker = f"@@AQI_DISPLAY_BLOCK_{len(safe_blocks)}@@"
+        safe_blocks[marker] = f'<span class="{class_value}">{safe_body}</span>'
+        return marker
+
+    display_html = re.sub(
+        r'<anki-mathjax(?P<attrs>[^>]*)>(?P<body>.*?)</anki-mathjax>',
+        replace_mathjax,
+        value or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    display_html = re.sub(
+        r"<p\b[^>]*>(?:\s|&nbsp;|&#160;)*</p>",
+        "",
+        display_html,
+        flags=re.IGNORECASE,
+    )
+    display_html = re.sub(
+        r'<pre[^>]*>(?P<body>.*?)</pre>',
+        protect_pre_block,
+        display_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    display_html = re.sub(
+        r"<\s*(/?)\s*(mark|strong|b|em|i|u|s|sub|sup|p|ul|ol|li|br|span|code)\b(?P<attrs>[^>]*)>",
+        protect_tag,
+        display_html,
+        flags=re.IGNORECASE,
+    )
+    display_html = re.sub(r"\s*(@@AQI_DISPLAY_BLOCK_\d+@@)\s*", r"\1", display_html)
+    safe_html = html.escape(extract_code_text(display_html).strip())
+    safe_html = safe_html.replace("\n", "<br>")
+    for marker, block in safe_blocks.items():
+        safe_html = safe_html.replace(marker, block)
+    for marker, tag in safe_tags.items():
+        safe_html = safe_html.replace(marker, tag)
+    safe_html = re.sub(
+        r"(</?(?:p|ul|ol|li)>|<br>)(?:\s|<br>)+(?=</?(?:p|ul|ol|li)>|<br>)",
+        r"\1",
+        safe_html,
+    )
+    return safe_html
+
+
+def _render_native_typed_diff(output: str, expected: str, provided: str) -> str:
+    output = output.replace(
+        "<code id=typeans>",
+        '<code id=typeans class="mathjax_process aqi-expected-rich">',
+        1,
+    )
+    expected_html = _render_expected_answer_html(expected)
+    pattern = re.compile(
+        r'(?s)(<code id=typeans class="mathjax_process aqi-expected-rich">)(.*?)(</code>)'
+    )
+
+    def replace_expected(match) -> str:
+        if not expected_html:
+            return match.group(0)
+        content = match.group(2)
+        arrow = '<br><span id=typearrow>&darr;</span><br>'
+        if arrow in content:
+            content = content.split(arrow, 1)[0] + arrow + expected_html
+        elif provided:
+            content = f'<div class="typeGood">{expected_html}</div>'
+        else:
+            content = expected_html
+        return match.group(1) + content + match.group(3)
+
+    return pattern.sub(replace_expected, output, count=1)
 
 def _join_answer_segments(segments: list[str]) -> str:
     return " ".join(segment.strip() for segment in segments if isinstance(segment, str) and segment.strip()).strip()
@@ -2279,9 +2503,6 @@ def build_accepted_answer_pool(card) -> tuple[str, list[str]]:
     contract = build_answer_contract(card)
     return contract["canonical_joined_answer"], contract["accepted_joined_answers"]
 
-def _normalize_expected_compare_text(value: str) -> str:
-    return extract_code_text(value).strip()
-
 def _contains_variant_media_marker(value: str) -> bool:
     lowered = (value or "").lower()
     return any(marker in lowered for marker in QUESTION_VARIANT_MEDIA_MARKERS)
@@ -2292,16 +2513,16 @@ def build_visible_expected_alternatives(raw_answers: list[str], primary_expected
     for raw_answer in raw_answers or []:
         if not isinstance(raw_answer, str) or _contains_variant_media_marker(raw_answer):
             continue
-        normalized = _normalize_expected_compare_text(raw_answer)
+        display_answer = raw_answer.strip()
         match_key = _normalize_answer_match_key(raw_answer)
-        if not normalized or not match_key or match_key in seen:
+        if not display_answer or not match_key or match_key in seen:
             continue
         seen.add(match_key)
-        visible_answers.append(normalized)
+        visible_answers.append(display_answer)
     return visible_answers
 
 def build_expected_display_model(card, expected_text: str) -> dict:
-    primary_expected = _normalize_display_answer_text(expected_text)
+    primary_expected = (expected_text or "").strip()
     if not card:
         return {
             "primary_expected": primary_expected,
@@ -2309,7 +2530,7 @@ def build_expected_display_model(card, expected_text: str) -> dict:
         }
 
     contract = build_answer_contract(card)
-    primary_expected = _normalize_display_answer_text(contract.get("canonical_display_answer") or expected_text)
+    primary_expected = (contract.get("canonical_display_answer") or expected_text or "").strip()
 
     return {
         "primary_expected": primary_expected,
@@ -2544,9 +2765,6 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     show_anki = config.get("show_anki_compare", True)
     show_code = config.get("show_code_compare", True)
     
-    # Skip if AI is disabled
-    if not config.get("enabled", True):
-        return output
     card = mw.reviewer.card if hasattr(mw, 'reviewer') and mw.reviewer else None
     if not get_card_capabilities(card, output, "Answer").get("answer_compare"):
         return output
@@ -2580,15 +2798,16 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     print(f"Rendering comparison for key: {cache_key}")
     
     # Affichage alternatif fidèle pour le code (en plus du diff Anki)
+    expected_display = build_expected_display_model(card, initial_expected)
+    expected_source = expected_display["primary_expected"]
+    output = _render_native_typed_diff(output, expected_source, initial_provided)
     anki_section = f"""
     <div class="aqi-anki-compare">
     {output}
     </div>
     """ if show_anki else ""
-
-    expected_display = build_expected_display_model(card, initial_expected)
     code_block = _code_compare_block(
-        expected_display["primary_expected"],
+        expected_source,
         initial_provided,
         lang_hint="",
         labels=labels,
@@ -2596,13 +2815,15 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     ) if show_code else ""
         
     # Affichage simplifié des résultats
+    typeset_script = f"<script>{build_post_refresh_typeset_js()}</script>"
     enhanced_output = f"""
     <div class="aqi-shell">
         {anki_section}
         {code_block}
         
-        {build_ai_analysis_panel_html(cache_key, language)}
+        {build_ai_analysis_panel_html(cache_key, language) if config.get("enabled", True) else ""}
     </div>
+    {typeset_script}
     """
     
     # Nettoyer les caches plus prudemment
@@ -3091,6 +3312,12 @@ def setup_config_menu():
             enabled_checkbox.setChecked(bool(mode_config.get("enabled", mode_key == "standard")))
             tab_layout.addWidget(enabled_checkbox)
 
+            standard_required_label = None
+            if mode_key == "deep":
+                standard_required_label = QLabel("Standard Mode is required.")
+                standard_required_label.setStyleSheet("color: #6c757d;")
+                tab_layout.addWidget(standard_required_label)
+
             provider_layout = QHBoxLayout()
             provider_layout.addWidget(QLabel(ui["ai_provider"]))
             provider_combo = QComboBox()
@@ -3254,7 +3481,11 @@ def setup_config_menu():
                 controlled_widgets.append(notebooklm_checkbox)
 
             def update_mode_enabled_state():
-                enabled = enabled_checkbox.isChecked()
+                standard_available = mode_key != "deep" or mode_widgets["standard"]["enabled"].isChecked()
+                if standard_required_label is not None:
+                    enabled_checkbox.setEnabled(standard_available)
+                    standard_required_label.setVisible(not standard_available)
+                enabled = standard_available and enabled_checkbox.isChecked()
                 for widget in controlled_widgets:
                     widget.setEnabled(enabled)
                 if notebooklm_checkbox is not None:
@@ -3277,6 +3508,7 @@ def setup_config_menu():
                 "max_tokens": tokens_spin,
                 "temperature": temp_spin,
                 "refresh_models": refresh_model_choices,
+                "update_enabled_state": update_mode_enabled_state,
             }
             if mode_key == "deep":
                 mode_widgets[mode_key].update({
@@ -3287,6 +3519,8 @@ def setup_config_menu():
 
         create_mode_tab("standard", "Standard", "Use Standard Analysis", standard_mode)
         create_mode_tab("deep", "Deep", "Use Deep Analysis", deep_mode)
+        mode_widgets["standard"]["enabled"].toggled.connect(mode_widgets["deep"]["update_enabled_state"])
+        mode_widgets["deep"]["update_enabled_state"]()
 
         providers_tab = QWidget()
         providers_layout = QVBoxLayout(providers_tab)

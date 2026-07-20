@@ -37,6 +37,7 @@ def resolve_ai_runtime_config(config=None, language: str | None = None, analysis
     resolved_analysis_mode = normalize_analysis_mode(analysis_mode)
     general_settings = merged_config.get("general", {}) if isinstance(merged_config.get("general"), dict) else {}
     mode_settings = get_mode_settings(merged_config, resolved_analysis_mode)
+    standard_enabled = bool(get_mode_settings(merged_config, "standard").get("enabled", True))
     resolved_language = (language or general_settings.get("language", merged_config.get("language", "english")) or "english").strip() or "english"
     provider = str(mode_settings.get("provider", merged_config.get("provider", "openai")) or "openai").strip() or "openai"
     provider_settings = get_provider_settings(merged_config, provider)
@@ -48,7 +49,9 @@ def resolve_ai_runtime_config(config=None, language: str | None = None, analysis
     max_tokens = int(mode_settings.get("max_tokens", merged_config.get("max_tokens", 200)) or merged_config.get("max_tokens", 200))
     temperature = float(mode_settings.get("temperature", merged_config.get("temperature", 0.7)) or merged_config.get("temperature", 0.7))
     availability_reason = ""
-    if resolved_analysis_mode == "deep" and not mode_enabled:
+    if resolved_analysis_mode == "deep" and not standard_enabled:
+        availability_reason = "Standard Mode is required"
+    elif resolved_analysis_mode == "deep" and not mode_enabled:
         availability_reason = "Deep analysis disabled"
     elif resolved_analysis_mode == "standard" and not mode_enabled:
         availability_reason = "AI disabled"
