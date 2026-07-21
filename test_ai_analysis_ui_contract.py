@@ -668,6 +668,23 @@ def main():
     assert "<li>a maximum number of iterations.</li>" in rich_expected_compare
     assert r"\(t &gt; t_{\max}\)" in rich_expected_compare
 
+    heading_expected_html = addon._render_expected_answer_html(
+        '<h3 id="greedy">Greedy</h3><p>The item fits.</p>'
+    )
+    assert heading_expected_html == "<h3>Greedy</h3><p>The item fits.</p>"
+
+    table_expected_html = addon._render_expected_answer_html(
+        '<table onclick="alert(1)"><thead><tr>'
+        '<th>First <code>n</code> items</th>'
+        '<th style="text-align:right;color:red">c = 0</th>'
+        '</tr></thead><tbody><tr><td>n = 0</td><td>0</td></tr></tbody></table>'
+    )
+    assert table_expected_html == (
+        '<table><thead><tr><th>First <span class="aqi-expected-inline-code">n</span> items</th>'
+        '<th style="text-align:right">c = 0</th></tr></thead>'
+        '<tbody><tr><td>n = 0</td><td>0</td></tr></tbody></table>'
+    )
+
     colored_expected = (
         'It controls the VND neighborhoods.<br>'
         '<span style="color:rgb(255, 69, 0)">intensification</span>.'

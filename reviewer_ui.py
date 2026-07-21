@@ -965,6 +965,37 @@ textarea#typeans:focus,
   margin: 0 0 8px;
 }
 
+.aqi-expected-rich :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--aqi-gap-lg) 0 var(--aqi-gap-sm);
+  color: inherit;
+  font-family: var(--aqi-font-heading);
+  line-height: 1.25;
+}
+
+.aqi-expected-rich table {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+  margin: var(--aqi-gap-md) 0;
+  border-collapse: collapse;
+  overflow-x: auto;
+}
+
+.aqi-expected-rich th,
+.aqi-expected-rich td {
+  padding: 6px 8px;
+  border: 1px solid var(--ak-code-border);
+  color: inherit;
+  vertical-align: top;
+  white-space: normal;
+}
+
+.aqi-expected-rich th {
+  background: var(--aqi-control-bg);
+  font-weight: 700;
+}
+
 .aqi-expected-rich > :first-child {
   margin-top: 0;
 }
@@ -2509,6 +2540,18 @@ def _extract_safe_span_color(attrs: str) -> str:
     return ""
 
 
+def _extract_safe_text_alignment(attrs: str) -> str:
+    style_match = re.search(r'\bstyle\s*=\s*(["\'])(.*?)\1', attrs or "", flags=re.IGNORECASE | re.DOTALL)
+    if not style_match:
+        return ""
+    for declaration in style_match.group(2).split(";"):
+        name, separator, value = declaration.partition(":")
+        if separator and name.strip().casefold() == "text-align":
+            alignment = value.strip().casefold()
+            return alignment if alignment in {"left", "center", "right"} else ""
+    return ""
+
+
 def _extract_safe_highlight_classes(attrs: str) -> str:
     class_match = re.search(r'\bclass\s*=\s*(["\'])(.*?)\1', attrs or "", flags=re.IGNORECASE | re.DOTALL)
     if not class_match:
@@ -2552,6 +2595,9 @@ def _render_expected_answer_html(value: str) -> str:
             if color:
                 safe_attrs.append(f'style="color:{html.escape(color, quote=True)}"')
             safe_tag = "<span" + (" " + " ".join(safe_attrs) if safe_attrs else "") + ">"
+        elif tag in {"th", "td"}:
+            alignment = _extract_safe_text_alignment(match.group("attrs"))
+            safe_tag = f'<{tag} style="text-align:{alignment}">' if alignment else f"<{tag}>"
         else:
             safe_tag = f"<{tag}>"
         safe_tags[marker] = safe_tag
@@ -2598,7 +2644,7 @@ def _render_expected_answer_html(value: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
     display_html = re.sub(
-        r"<\s*(/?)\s*(mark|strong|b|em|i|u|s|sub|sup|p|ul|ol|li|br|span|code)\b(?P<attrs>[^>]*)>",
+        r"<\s*(/?)\s*(mark|strong|b|em|i|u|s|sub|sup|h[1-6]|p|ul|ol|li|br|span|code|table|thead|tbody|tr|th|td)\b(?P<attrs>[^>]*)>",
         protect_tag,
         display_html,
         flags=re.IGNORECASE,
@@ -2611,7 +2657,7 @@ def _render_expected_answer_html(value: str) -> str:
     for marker, tag in safe_tags.items():
         safe_html = safe_html.replace(marker, tag)
     safe_html = re.sub(
-        r"(</?(?:p|ul|ol|li)>|<br>)(?:\s|<br>)+(?=</?(?:p|ul|ol|li)>|<br>)",
+        r"(</?(?:h[1-6]|p|ul|ol|li|table|thead|tbody|tr|th|td)>|<br>)(?:\s|<br>)+(?=</?(?:h[1-6]|p|ul|ol|li|table|thead|tbody|tr|th|td)>|<br>)",
         r"\1",
         safe_html,
     )
