@@ -73,14 +73,14 @@ AI_UI_TEXTS = {
 }
 
 LANG_TO_LABELS = {
-    "english":   {"expected": "Expected",  "provided": "Your answer"},
-    "french":    {"expected": "Attendu",   "provided": "Saisi"},
-    "spanish":   {"expected": "Esperado",  "provided": "Ingresado"},
-    "german":    {"expected": "Erwartet",  "provided": "Eingegeben"},
-    "russian":   {"expected": "Ожидаемый ответ", "provided": "Ваш ответ"},
-    "japanese":  {"expected": "期待される回答", "provided": "あなたの回答"},
-    "chinese":   {"expected": "期望答案", "provided": "你的回答"},
-    "korean":    {"expected": "정답", "provided": "내 답변"},
+    "english":   {"expected": "Expected",  "provided": "Your answer", "empty": "No answer entered"},
+    "french":    {"expected": "Attendu",   "provided": "Saisi", "empty": "Aucune réponse saisie"},
+    "spanish":   {"expected": "Esperado",  "provided": "Ingresado", "empty": "No se ingresó ninguna respuesta"},
+    "german":    {"expected": "Erwartet",  "provided": "Eingegeben", "empty": "Keine Antwort eingegeben"},
+    "russian":   {"expected": "Ожидаемый ответ", "provided": "Ваш ответ", "empty": "Ответ не введён"},
+    "japanese":  {"expected": "期待される回答", "provided": "あなたの回答", "empty": "回答が入力されていません"},
+    "chinese":   {"expected": "期望答案", "provided": "你的回答", "empty": "未输入答案"},
+    "korean":    {"expected": "정답", "provided": "내 답변", "empty": "입력한 답변 없음"},
 }
 
 def _get_language_bundle(language="english") -> dict:
@@ -94,6 +94,7 @@ def get_compare_labels(config: dict) -> dict:
     return {
         "expected": overrides.get("expected", base["expected"]),
         "provided": overrides.get("provided", base["provided"]),
+        "empty": base["empty"],
     }
 
 def _detect_ui_lang_code() -> str:

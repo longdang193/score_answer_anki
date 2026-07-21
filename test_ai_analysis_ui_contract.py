@@ -295,6 +295,7 @@ def main():
     fr_review_labels = addon.get_compare_labels({"language": "french", "ui_language": "en"})
     en_config_texts = addon.get_config_ui_texts({"language": "french", "ui_language": "en"})
     assert fr_review_labels["expected"] == addon.LANG_TO_LABELS["french"]["expected"]
+    assert fr_review_labels["empty"] == "Aucune réponse saisie"
     assert en_config_texts == addon.CONFIG_UI_TEXTS["en"]
 
     for language_key in sorted(set(addon.LANGUAGES.keys()) - {"english"}):
@@ -634,6 +635,27 @@ def main():
         {"expected": "Expected", "provided": "Your answer"},
     )
     assert "<mark>full LP relaxation</mark>" in highlighted_compare
+    assert 'role="separator"' in highlighted_compare
+    assert 'aria-label="Resize Expected and Your answer"' in highlighted_compare
+    assert 'class="aqi-compare-collapse"' not in highlighted_compare
+    assert 'class="aqi-compare-restore-icon"' in highlighted_compare
+    assert 'class="aqi-compare-empty"' in highlighted_compare
+    assert "No answer entered" in highlighted_compare
+    splitter_js = addon.build_compare_splitter_js()
+    assert "aqi-compare-expected-percent" in splitter_js
+    assert "ArrowLeft" in splitter_js
+    assert "event.key==='End'" in splitter_js
+    assert "event.key==='Enter'||event.key===' '" in splitter_js
+    assert "addEventListener('dblclick'" in splitter_js
+    assert "columnGap" in splitter_js
+    assert ".aqi-compare-splitter {" in source
+    assert "--aqi-compare-rail-width: 24px;" in source
+    assert "inset: 0 7px;" not in source
+    assert "white-space: pre;" in source
+    assert "color: inherit !important;" in source
+    assert ".aqi-compare-empty {" in source
+    assert "color: var(--ak-code-fg);" in source
+    assert '@media (max-width: 680px)' in source
 
     rich_expected_compare = addon._code_compare_block(
         r"<p>Typically</p><ul><li>a time limit (<anki-mathjax>t &gt; t_{\max}</anki-mathjax>) or</li><li>a maximum number of iterations.</li></ul>",
@@ -1851,6 +1873,22 @@ def main():
     assert "font-family: var(--aqi-font-body) !important;" in web_content.head
     assert ".aqi-active-question," in web_content.head
     assert ".aqi-choice-list," in web_content.head
+    assert "grid-template-columns: auto 1fr auto;" in web_content.head
+    assert "#aqi-review-footer .aqi-insert-tab-btn {" in web_content.head
+    assert "#aqi-review-footer .aqi-type-collapse-btn {" in web_content.head
+    assert "#aqi-review-footer .aqi-type-collapse-icon {" in web_content.head
+    assert "aqi-type-collapse-icon" in source
+    assert 'd="m6 9 6 6 6-6"' in source
+    assert "⌃" not in source
+    assert "⌄" not in source
+    assert "Collapse answer input" in source
+    assert "Expand answer input" in source
+    assert "#aqi-review-footer .aqi-front-hint-toggle {" in web_content.head
+    assert "data-aqi-type-collapsed=\"true\"" in web_content.head
+    assert '#aqi-review-footer[data-aqi-type-collapsed="true"] {' in web_content.head
+    assert "padding-bottom: 4px;" in web_content.head
+    assert "padding-block: 4px;" in web_content.head
+    assert "aqi-type-input-collapsed" in source
     assert ".aqi-active-question,\n.sqv-active-question {\n  font-family: inherit;" in web_content.head
     assert ".aqi-choice-list,\n.sqv-choice-list {\n  font-family: inherit;" in web_content.head
 

@@ -54,7 +54,7 @@ Phase 1 uses four top-level tabs:
   - Show code compare
   - Shared custom prompt fields
 - **Rule**: This tab does not own provider credentials or mode-specific model choices
-- **Compare rendering**: expected answers preserve safe inline formatting, paragraph/list/highlight structure, and Anki MathJax formulas; native typed comparison receives a post-render MathJax pass
+- **Compare rendering**: expected answers preserve safe inline formatting, paragraph/list/highlight structure, and Anki MathJax formulas; native typed comparison receives a post-render MathJax pass; desktop comparison width is draggable, keyboard-adjustable, collapsible, and remembered locally
 
 #### Standard
 - **Purpose**: Own automatic standard-analysis runtime
@@ -195,7 +195,8 @@ Each AI provider has its own tab with specific configuration:\n
   - A score from 0-10
   - Specific improvement tips
   - A compact refresh action if you want a fresh answer
-- On supported typed-answer cards, the answer box stays docked at the bottom with the hint controls so you can keep the input visible while reading long questions.
+- On supported typed-answer cards, the answer box stays docked at the bottom; `Insert Tab`, the answer-box collapse control, and `Hint` sit below it on one row.
+- The answer-box collapse state is remembered locally; collapsing hides only the box and preserves its typed content.
 - When you scroll to the end of a long typed-answer question, the add-on reserves space above the docked footer so the last visible word is not hidden behind the input area.
 
 ## AI Scoring System

@@ -143,16 +143,17 @@ function getTypedAnswerFooter(){
   return document.getElementById('aqi-review-footer');
 }
 function ensureTypedAnswerFooter(){
+  var contentHtml='<div class="aqi-review-footer__content"><div class="aqi-review-footer__input"></div><button class="aqi-ai-action-btn aqi-type-collapse-btn" type="button" aria-controls="typeans" aria-expanded="true" aria-label="Collapse answer input" title="Collapse answer input"><svg class="aqi-type-collapse-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button><div class="aqi-review-footer__hint"></div></div>';
   var footer=getTypedAnswerFooter();
   if(!footer){
     footer=document.createElement('div');
     footer.id='aqi-review-footer';
     footer.setAttribute('data-aqi-review-footer','1');
-    footer.innerHTML='<div class="aqi-review-footer__content"><div class="aqi-review-footer__input"></div><div class="aqi-review-footer__hint"></div></div>';
+    footer.innerHTML=contentHtml;
     (document.body||document.documentElement).appendChild(footer);
   }
   if(!footer.querySelector('.aqi-review-footer__content')){
-    footer.innerHTML='<div class="aqi-review-footer__content"><div class="aqi-review-footer__input"></div><div class="aqi-review-footer__hint"></div></div>';
+    footer.innerHTML=contentHtml;
   }
   return footer;
 }
@@ -224,6 +225,39 @@ function ensureTypedAnswerFooterMutationObserver(){
   window.__aqiTypedAnswerFooterMutationObserver=new MutationObserver(function(){ syncTypedAnswerFooter(); });
   window.__aqiTypedAnswerFooterMutationObserver.observe(document.documentElement||document.body,{childList:true,subtree:true});
 }
+function wireTypedAnswerCollapse(footer,ta){
+  if(!footer||!ta) return;
+  var btn=footer.querySelector('.aqi-type-collapse-btn');
+  if(!btn) return;
+  var storageKey='aqi-type-input-collapsed';
+  function readCollapsed(){
+    try{ return window.localStorage.getItem(storageKey)==='true'; }catch(_){ return false; }
+  }
+  function apply(collapsed,save,focus){
+    footer.dataset.aqiTypeCollapsed=collapsed?'true':'false';
+    btn.setAttribute('aria-expanded',collapsed?'false':'true');
+    btn.setAttribute('aria-label',collapsed?'Expand answer input':'Collapse answer input');
+    btn.setAttribute('title',collapsed?'Expand answer input':'Collapse answer input');
+    var insert=footer.querySelector('.aqi-insert-tab-btn');
+    if(insert) insert.disabled=collapsed;
+    if(save){
+      try{ window.localStorage.setItem(storageKey,collapsed?'true':'false'); }catch(_){ }
+    }
+    requestAnimationFrame(function(){
+      syncTypedAnswerFooterOffset();
+      measureTypedAnswerFooterGeometry();
+      if(focus&&!collapsed) ta.focus();
+    });
+  }
+  if(!btn.dataset.aqiBound){
+    btn.dataset.aqiBound='1';
+    btn.addEventListener('click',function(event){
+      event.preventDefault();
+      apply(footer.dataset.aqiTypeCollapsed!=='true',true,true);
+    });
+  }
+  apply(readCollapsed(),false,false);
+}
 function syncTypedAnswerFooter(){
   var ta=document.getElementById('typeans');
   var wrap=ta&&typeof ta.closest==='function'?ta.closest('.aqi-type-input-wrap'):null;
@@ -247,6 +281,7 @@ function syncTypedAnswerFooter(){
     });
   }
   if(hintHost&&hint&&hint.parentNode!==hintHost){ hintHost.appendChild(hint); }
+  wireTypedAnswerCollapse(footer,ta);
   ensureTypedAnswerFooterResizeObserver();
   syncTypedAnswerFooterOffset();
   measureTypedAnswerFooterGeometry();
@@ -695,31 +730,91 @@ body.aqi-review-footer-active {
 
 .aqi-review-footer__content {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px 12px;
+  align-items: center;
   padding: 12px;
   pointer-events: auto;
 }
 
 .aqi-review-footer__input,
-.aqi-review-footer__hint {
-  width: 100%;
+.aqi-review-footer__hint,
+#aqi-review-footer .aqi-type-input-wrap,
+#aqi-review-footer .aqi-front-hint-wrap {
+  display: contents;
 }
 
-.aqi-review-footer__input > .aqi-type-input-wrap,
-.aqi-review-footer__hint > .aqi-front-hint-wrap {
-  width: 100%;
-  max-width: none;
+#aqi-review-footer #typeans {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+#aqi-review-footer .aqi-insert-tab-btn {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: start;
+}
+
+#aqi-review-footer .aqi-type-collapse-btn {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: center;
+  width: 36px;
+  height: 32px;
+  padding: 0;
+}
+
+#aqi-review-footer .aqi-type-collapse-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  transition: transform 160ms ease;
+}
+
+#aqi-review-footer[data-aqi-type-collapsed="true"] .aqi-type-collapse-icon {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #aqi-review-footer .aqi-type-collapse-icon {
+    transition: none;
+  }
+}
+
+#aqi-review-footer .aqi-front-hint-toggle {
+  grid-column: 3;
+  grid-row: 2;
+  justify-self: end;
   margin: 0;
 }
 
-.aqi-review-footer__hint .aqi-front-hint-wrap {
-  text-align: left;
+#aqi-review-footer .aqi-front-hint-panel {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  width: 100%;
 }
 
-.aqi-review-footer__hint .aqi-front-hint-toggle {
-  margin-bottom: 8px;
+#aqi-review-footer[data-aqi-type-collapsed="true"] {
+  padding-bottom: 4px;
+}
+
+#aqi-review-footer[data-aqi-type-collapsed="true"] .aqi-review-footer__content {
+  padding-block: 4px;
+}
+
+#aqi-review-footer[data-aqi-type-collapsed="true"] #typeans {
+  display: none !important;
+}
+
+#aqi-review-footer[data-aqi-type-collapsed="true"] .aqi-insert-tab-btn,
+#aqi-review-footer[data-aqi-type-collapsed="true"] .aqi-type-collapse-btn,
+#aqi-review-footer[data-aqi-type-collapsed="true"] .aqi-front-hint-toggle {
+  grid-row: 1;
+}
+
+#aqi-review-footer[data-aqi-type-collapsed="true"] .aqi-front-hint-panel {
+  grid-row: 2;
 }
 
 input#typeans:focus,
@@ -731,6 +826,90 @@ textarea#typeans:focus,
 }
 
 /* Styles des blocs de comparaison */
+.aqi-compare,
+.ak-compare {
+  --aqi-expected-share: 1fr;
+  --aqi-provided-share: 1fr;
+  --aqi-compare-rail-width: 24px;
+  --aqi-compare-pane-gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, var(--aqi-expected-share)) var(--aqi-compare-rail-width) minmax(0, var(--aqi-provided-share));
+  column-gap: var(--aqi-compare-pane-gap);
+  margin: 12px 0;
+}
+
+.aqi-compare-pane {
+  min-width: 0;
+}
+
+.aqi-compare-splitter {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.aqi-compare-splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--ak-code-border);
+}
+
+.aqi-compare-splitter:hover::before,
+.aqi-compare-splitter:focus-visible::before {
+  background: var(--ak-code-label);
+}
+
+.aqi-compare-splitter-grip {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 8px;
+  height: 28px;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--ak-code-label) 1px, transparent 1.5px) center / 4px 5px;
+  color: var(--ak-code-label);
+  opacity: 0.8;
+}
+
+.aqi-compare-restore-icon {
+  display: none;
+  width: 18px;
+  height: 18px;
+}
+
+.aqi-compare-splitter:focus-visible {
+  outline: 2px solid var(--ak-code-label);
+  outline-offset: 2px;
+}
+
+.aqi-compare[data-aqi-provided-hidden="true"] {
+  --aqi-expected-share: 1fr;
+  --aqi-provided-share: 0fr;
+}
+
+.aqi-compare[data-aqi-provided-hidden="true"] .aqi-compare-provided {
+  display: none;
+}
+
+.aqi-compare[data-aqi-provided-hidden="true"] .aqi-compare-splitter-grip {
+  background: none;
+  opacity: 1;
+}
+
+.aqi-compare[data-aqi-provided-hidden="true"] .aqi-compare-restore-icon {
+  display: block;
+}
+
 .aqi-compare .aqi-compare-label,
 .ak-compare .ak-label {
   font-weight: 700;
@@ -746,6 +925,40 @@ textarea#typeans:focus,
   background: var(--ak-code-bg) !important;
   color: var(--ak-code-fg) !important;
   overflow: auto;
+}
+
+.aqi-compare .aqi-compare-pre.aqi-expected-rich {
+  padding: 0;
+  border: 0 !important;
+  background: transparent !important;
+  color: inherit !important;
+  overflow: visible;
+}
+
+.aqi-compare-empty {
+  display: block;
+  color: var(--ak-code-fg);
+  font-style: italic;
+  opacity: 0.75;
+}
+
+@media (max-width: 680px) {
+  .aqi-compare,
+  .ak-compare {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .aqi-compare-expected,
+  .aqi-compare-provided {
+    display: block !important;
+    padding: 0;
+  }
+
+  .aqi-compare-splitter {
+    display: none;
+  }
 }
 
 .aqi-expected-rich p {
@@ -766,8 +979,9 @@ textarea#typeans:focus,
   padding: 10px 12px;
   border-radius: 8px;
   background: rgba(127, 127, 127, 0.12);
+  color: var(--ak-code-fg);
   overflow-x: auto;
-  white-space: pre-wrap;
+  white-space: pre;
   text-align: left;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
 }
@@ -1059,23 +1273,121 @@ def _build_expected_variant_chip_list(variants: list[str]) -> str:
         return ""
     return f'<div class="aqi-choice-list sqv-choice-list">{chips}</div>'
 
+def build_compare_splitter_js() -> str:
+    return """
+(function(){
+  Array.prototype.forEach.call(document.querySelectorAll('.aqi-compare'),function(compare){
+    if(compare.dataset.aqiSplitterReady) return;
+    compare.dataset.aqiSplitterReady='1';
+    var splitter=compare.querySelector('.aqi-compare-splitter');
+    if(!splitter) return;
+    var storageKey='aqi-compare-expected-percent';
+    var hiddenKey='aqi-compare-provided-hidden';
+    var minimum=25;
+    var maximum=100;
+    var initial=50;
+    var current=initial;
+    var lastVisible=initial;
+    var expectedLabel=compare.dataset.aqiExpectedLabel||'Expected';
+    var providedLabel=compare.dataset.aqiProvidedLabel||'Your answer';
+    function readNumber(key,fallback){
+      try{ return Number(window.localStorage.getItem(key))||fallback; }catch(_){ return fallback; }
+    }
+    function readHidden(){
+      try{ return window.localStorage.getItem(hiddenKey)==='true'; }catch(_){ return false; }
+    }
+    function persist(){
+      try{
+        window.localStorage.setItem(storageKey,String(lastVisible));
+        window.localStorage.setItem(hiddenKey,current===maximum?'true':'false');
+      }catch(_){ }
+    }
+    function apply(percent,save){
+      percent=Math.max(minimum,Math.min(maximum,Number(percent)||initial));
+      current=percent>=maximum-3?maximum:percent;
+      var hidden=current===maximum;
+      if(!hidden) lastVisible=current;
+      compare.dataset.aqiProvidedHidden=hidden?'true':'false';
+      compare.style.setProperty('--aqi-expected-share',(hidden?1:current)+'fr');
+      compare.style.setProperty('--aqi-provided-share',(hidden?0:maximum-current)+'fr');
+      splitter.setAttribute('aria-valuemin',String(minimum));
+      splitter.setAttribute('aria-valuemax',String(maximum));
+      splitter.setAttribute('aria-valuenow',String(Math.round(current)));
+      splitter.setAttribute('aria-valuetext',hidden?providedLabel+' hidden':expectedLabel+' '+Math.round(current)+'%, '+providedLabel+' '+Math.round(maximum-current)+'%');
+      splitter.setAttribute('title','Drag to resize. Double-click or press Enter to '+(hidden?'show ':'hide ')+providedLabel+'.');
+      if(save) persist();
+    }
+    function toggle(){
+      apply(current===maximum?lastVisible:maximum,true);
+    }
+    lastVisible=Math.max(minimum,Math.min(maximum-4,readNumber(storageKey,initial)));
+    apply(readHidden()?maximum:lastVisible,false);
+    splitter.addEventListener('keydown',function(event){
+      var next=current;
+      if(event.key==='ArrowLeft') next=current-5;
+      else if(event.key==='ArrowRight') next=current+5;
+      else if(event.key==='Home') next=minimum;
+      else if(event.key==='End') next=maximum;
+      else if(event.key==='Enter'||event.key===' '){ event.preventDefault(); toggle(); return; }
+      else return;
+      event.preventDefault();
+      apply(next,true);
+    });
+    splitter.addEventListener('dblclick',function(event){
+      event.preventDefault();
+      toggle();
+    });
+    splitter.addEventListener('pointerdown',function(event){
+      event.preventDefault();
+      splitter.setPointerCapture(event.pointerId);
+      function move(moveEvent){
+        var rect=compare.getBoundingClientRect();
+        var splitterWidth=splitter.getBoundingClientRect().width;
+        var gap=parseFloat(window.getComputedStyle(compare).columnGap)||0;
+        var available=Math.max(1,rect.width-splitterWidth-gap*2);
+        var expectedWidth=moveEvent.clientX-rect.left-gap-splitterWidth/2;
+        apply(expectedWidth/available*maximum,false);
+      }
+      function stop(){
+        splitter.removeEventListener('pointermove',move);
+        splitter.removeEventListener('pointerup',stop);
+        splitter.removeEventListener('pointercancel',stop);
+        persist();
+      }
+      splitter.addEventListener('pointermove',move);
+      splitter.addEventListener('pointerup',stop);
+      splitter.addEventListener('pointercancel',stop);
+    });
+  });
+})();
+""".strip()
+
 def _code_compare_block(expected: str, provided: str, lang_hint: str, labels: dict, expected_alternatives: list[str] | None = None) -> str:
     exp_html = _render_expected_answer_html(expected)
     prov_text = extract_code_text(provided)
     le = labels.get("expected", "Expected")
     lp = labels.get("provided", "Your answer")
+    empty_text = labels.get("empty", "No answer entered")
+    le_attr = html.escape(le, quote=True)
+    lp_attr = html.escape(lp, quote=True)
+    provided_html = html.escape(prov_text) if prov_text.strip() else f'<span class="aqi-compare-empty">{html.escape(empty_text)}</span>'
     expected_variant_list = _build_expected_variant_chip_list(expected_alternatives or [])
     return f"""
-    <div class="aqi-compare ak-compare" style="display:flex; gap:12px; margin:12px 0;">
-      <div style="flex:1; min-width:0;">
+    <div class="aqi-compare ak-compare" data-aqi-expected-label="{le_attr}" data-aqi-provided-label="{lp_attr}">
+      <section class="aqi-compare-pane aqi-compare-expected">
         <div class="aqi-compare-label ak-label">{html.escape(le)}</div>
         <div class="aqi-compare-pre ak-pre aqi-expected-rich">{exp_html}</div>
         {expected_variant_list}
+      </section>
+      <div class="aqi-compare-splitter" role="separator" aria-label="Resize {le_attr} and {lp_attr}" aria-orientation="vertical" tabindex="0">
+        <span class="aqi-compare-splitter-grip" aria-hidden="true">
+          <svg class="aqi-compare-restore-icon" viewBox="0 0 24 24" focusable="false"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        </span>
       </div>
-      <div style="flex:1; min-width:0;">
+      <section class="aqi-compare-pane aqi-compare-provided">
         <div class="aqi-compare-label ak-label">{html.escape(lp)}</div>
-        <div class="aqi-compare-pre ak-pre">{html.escape(prov_text)}</div>
-      </div>
+        <div class="aqi-compare-pre ak-pre">{provided_html}</div>
+      </section>
     </div>
     """
 
@@ -2815,7 +3127,7 @@ def render_enhanced_comparison(output, initial_expected, initial_provided, type_
     ) if show_code else ""
         
     # Affichage simplifié des résultats
-    typeset_script = f"<script>{build_post_refresh_typeset_js()}</script>"
+    typeset_script = f"<script>{build_compare_splitter_js()}{build_post_refresh_typeset_js()}</script>"
     enhanced_output = f"""
     <div class="aqi-shell">
         {anki_section}
